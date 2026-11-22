@@ -108,15 +108,28 @@ function renderReticleIcon(size) {
 export function generateIcons() {
   fs.mkdirSync(iconsDir, { recursive: true });
 
+  // 1. Panel Dock Icon: 23x23 (@1x) & 46x46 (@2x)
   const icon23 = renderReticleIcon(23);
-  const path23 = path.resolve(iconsDir, "icon_23.png");
-  fs.writeFileSync(path23, icon23);
-  console.log(`[IconGen] Generated ${path23} (${icon23.length} bytes)`);
-
   const icon46 = renderReticleIcon(46);
-  const path46 = path.resolve(iconsDir, "icon_46.png");
-  fs.writeFileSync(path46, icon46);
-  console.log(`[IconGen] Generated ${path46} (${icon46.length} bytes)`);
+  const icon48 = renderReticleIcon(48);
+
+  // UXP logical resolution format: icons/icon@1x.png and icons/icon@2x.png
+  fs.writeFileSync(path.resolve(iconsDir, "icon@1x.png"), icon23);
+  fs.writeFileSync(path.resolve(iconsDir, "icon@2x.png"), icon46);
+  fs.writeFileSync(path.resolve(iconsDir, "icon.png"), icon23);
+  fs.writeFileSync(path.resolve(iconsDir, "icon_23.png"), icon23);
+  fs.writeFileSync(path.resolve(iconsDir, "icon_46.png"), icon46);
+
+  // Root manifest plugin icon: 48x48
+  fs.writeFileSync(path.resolve(iconsDir, "plugin@1x.png"), icon48);
+  fs.writeFileSync(path.resolve(iconsDir, "plugin.png"), icon48);
+
+  console.log(`[IconGen] Generated icons in ${iconsDir}:`);
+  console.log(`  - icon@1x.png (23x23)`);
+  console.log(`  - icon@2x.png (46x46)`);
+  console.log(`  - icon.png (23x23)`);
+  console.log(`  - plugin@1x.png (48x48)`);
+  console.log(`  - plugin.png (48x48)`);
 }
 
 generateIcons();

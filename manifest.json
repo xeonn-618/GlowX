@@ -10,17 +10,10 @@
   },
   "icons": [
     {
-      "width": 23,
-      "height": 23,
-      "path": "icons/icon_23.png",
-      "scale": [1, 2],
-      "theme": ["all"]
-    },
-    {
-      "width": 46,
-      "height": 46,
-      "path": "icons/icon_46.png",
-      "scale": [1, 2],
+      "width": 48,
+      "height": 48,
+      "path": "icons/plugin.png",
+      "scale": [1],
       "theme": ["all"]
     }
   ],
@@ -35,16 +28,9 @@
         {
           "width": 23,
           "height": 23,
-          "path": "icons/icon_23.png",
+          "path": "icons/icon.png",
           "scale": [1, 2],
-          "theme": ["all"]
-        },
-        {
-          "width": 46,
-          "height": 46,
-          "path": "icons/icon_46.png",
-          "scale": [1, 2],
-          "theme": ["all"]
+          "theme": ["darkest", "dark", "medium", "light", "lightest"]
         }
       ],
       "minimumSize": {
