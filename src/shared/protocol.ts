@@ -1,0 +1,25 @@
+// Shared typed message protocol between UXP Host and WebView.
+// Import from both sides; no runtime code – types only.
+
+export type WebViewToUxpMessage =
+  | { type: "REQUEST_ACTIVE_LAYER"; maxPreviewDim?: number }
+  | {
+      type: "COMMIT_LAYER";
+      name: string;
+      width: number;
+      height: number;
+      blendMode: string;
+      opacity: number;
+      buffer: ArrayBuffer;
+    };
+
+export type UxpToWebViewMessage =
+  | {
+      type: "LAYER_PIXELS";
+      width: number;
+      height: number;
+      channels: number;
+      buffer: ArrayBuffer;
+    }
+  | { type: "COMMIT_DONE" }
+  | { type: "ERROR"; message: string };
