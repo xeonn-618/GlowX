@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "generate:icons": "node scripts/generate-icons.js",
+    "prebuild": "node scripts/generate-icons.js",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

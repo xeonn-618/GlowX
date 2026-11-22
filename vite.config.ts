@@ -2,13 +2,16 @@ import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, cpSync, existsSync } from "node:fs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 // Build output layout (UDT loads the `dist/` root):
 //   dist/
 //   ├── manifest.json      ← copied from project root
+//   ├── icons/             ← plugin icons for UDT & CCX packaging
+//   │   ├── icon_23.png
+//   │   └── icon_46.png
 //   ├── index.html         ← UXP host shell  (src/uxp/index.html)
 //   ├── host.js            ← UXP host script  (src/uxp/host.js)
 //   └── webview/           ← Vite React SPA bundle
@@ -23,6 +26,11 @@ function copyUxpHostFiles(): Plugin {
       copyFileSync(resolve(__dirname, "manifest.json"),        resolve(distRoot, "manifest.json"));
       copyFileSync(resolve(__dirname, "src/uxp/index.html"),   resolve(distRoot, "index.html"));
       copyFileSync(resolve(__dirname, "src/uxp/host.js"),      resolve(distRoot, "host.js"));
+
+      const iconsSrc = resolve(__dirname, "icons");
+      if (existsSync(iconsSrc)) {
+        cpSync(iconsSrc, resolve(distRoot, "icons"), { recursive: true });
+      }
     },
   };
 }
