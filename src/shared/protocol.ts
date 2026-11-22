@@ -2,7 +2,12 @@
 // Import from both sides; no runtime code – types only.
 
 export type WebViewToUxpMessage =
-  | { type: "REQUEST_ACTIVE_LAYER"; maxPreviewDim?: number; _msgId?: string }
+  | {
+      type: "REQUEST_ACTIVE_LAYER";
+      maxPreviewDim?: number;
+      purpose?: "PREVIEW" | "COMMIT";
+      _msgId?: string;
+    }
   | {
       type: "COMMIT_LAYER";
       name: string;
@@ -23,6 +28,9 @@ export type UxpToWebViewMessage =
       channels: number;
       buffer: Uint8Array;
       base64?: string;
+      purpose?: "PREVIEW" | "COMMIT";
+      docWidth?: number;
+      docHeight?: number;
     }
   | { type: "COMMIT_DONE" }
   | { type: "ERROR"; message: string };

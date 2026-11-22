@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { sendToUxp, onUxpMessage } from "./bridge";
+import { renderGlowToCanvas, renderGlowOffscreen } from "./engine/glowRenderer";
 import styles from "./App.module.css";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -25,6 +26,33 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onUxpMessage((msg) => {
       if (msg.type === "LAYER_PIXELS") {
+        // If purpose is COMMIT, process full-resolution offscreen WebGL2 pass & commit
+        if (msg.purpose === "COMMIT") {
+          try {
+            const fullResRendered = renderGlowOffscreen(
+              msg.buffer,
+              msg.width,
+              msg.height
+            );
+
+            sendToUxp({
+              type: "COMMIT_LAYER",
+              name: "GlowX Effect",
+              width: msg.width,
+              height: msg.height,
+              blendMode: "screen",
+              opacity: 100,
+              buffer: fullResRendered,
+            });
+          } catch (err) {
+            console.error("[GlowX] Full-res shader render failed:", err);
+            setErrorMsg((err as Error).message || "Failed to render full-resolution glow.");
+            setStatus("error");
+          }
+          return;
+        }
+
+        // Otherwise it's a downsampled preview
         setLayerPixels({
           width: msg.width,
           height: msg.height,
@@ -42,48 +70,36 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  // ── Draw pixels to canvas whenever layerPixels changes ─────────────────
+  // ── Draw glow to canvas whenever layerPixels changes ────────────────────
   useEffect(() => {
     if (!layerPixels || !canvasRef.current) return;
 
     const { width, height, buffer } = layerPixels;
-    const canvas = canvasRef.current;
-    canvas.width = width;
-    canvas.height = height;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const rgba = new Uint8ClampedArray(
-      buffer.buffer as ArrayBuffer,
-      buffer.byteOffset,
-      buffer.byteLength
-    );
-    const imageData = new ImageData(rgba, width, height);
-    ctx.putImageData(imageData, 0, 0);
+    renderGlowToCanvas(canvasRef.current, buffer, width, height);
   }, [layerPixels]);
 
   // ── Handlers ────────────────────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
     setStatus("loading");
     setErrorMsg("");
-    // Request a downsampled preview (max 512px on the longest side)
-    sendToUxp({ type: "REQUEST_ACTIVE_LAYER", maxPreviewDim: 512 });
+    // Request an aspect-correct preview (max 512px on the longest dimension)
+    sendToUxp({
+      type: "REQUEST_ACTIVE_LAYER",
+      maxPreviewDim: 512,
+      purpose: "PREVIEW",
+    });
   }, []);
 
   const handleApply = useCallback(() => {
-    if (!layerPixels) return;
     setStatus("committing");
+    setErrorMsg("");
+    // Request full doc.width × doc.height resolution (maxPreviewDim: undefined)
     sendToUxp({
-      type: "COMMIT_LAYER",
-      name: "GlowX Effect",
-      width: layerPixels.width,
-      height: layerPixels.height,
-      blendMode: "normal",
-      opacity: 100,
-      buffer: layerPixels.buffer,
+      type: "REQUEST_ACTIVE_LAYER",
+      maxPreviewDim: undefined,
+      purpose: "COMMIT",
     });
-  }, [layerPixels]);
+  }, []);
 
   // ── Render ───────────────────────────────────────────────────────────────
   const isLoading = status === "loading";
@@ -113,7 +129,13 @@ export default function App() {
 
         {isLoading && (
           <div className={styles.placeholder}>
-            <span className={styles.spinnerText}>Loading…</span>
+            <span className={styles.spinnerText}>Loading preview…</span>
+          </div>
+        )}
+
+        {isCommitting && (
+          <div className={styles.placeholder}>
+            <span className={styles.spinnerText}>Rendering & Applying full-res…</span>
           </div>
         )}
 
@@ -124,24 +146,18 @@ export default function App() {
           </div>
         )}
 
-        {hasLayer && (
-          <canvas
-            ref={canvasRef}
-            className={styles.canvas}
-            aria-label="Active layer preview"
-          />
-        )}
-
-        {/* Keep canvas mounted but hidden when no layer yet to retain ref */}
-        {!hasLayer && (
-          <canvas ref={canvasRef} style={{ display: "none" }} />
-        )}
+        <canvas
+          ref={canvasRef}
+          className={styles.canvas}
+          style={{ display: hasLayer && !isBusy ? "block" : "none" }}
+          aria-label="Active layer glow preview"
+        />
       </div>
 
       {/* Layer info strip */}
       {hasLayer && layerPixels && (
         <div className={styles.infoStrip}>
-          <span className={styles.infoLabel}>SIZE</span>
+          <span className={styles.infoLabel}>PREVIEW</span>
           <span className={styles.infoValue}>
             {layerPixels.width} × {layerPixels.height}
           </span>
@@ -156,7 +172,7 @@ export default function App() {
           className={styles.btnSecondary}
           onClick={handleRefresh}
           disabled={isBusy}
-          aria-label="Refresh active layer"
+          aria-label="Refresh active layer preview"
         >
           {isLoading ? "Loading…" : "Refresh Layer"}
         </button>
@@ -164,7 +180,7 @@ export default function App() {
           className={styles.btnPrimary}
           onClick={handleApply}
           disabled={isBusy || !hasLayer}
-          aria-label="Apply effect to new layer"
+          aria-label="Apply full-resolution glow to layer"
         >
           {isCommitting ? "Applying…" : "Apply to Layer"}
         </button>

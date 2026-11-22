@@ -182,19 +182,32 @@ async function handle(rawMsg) {
       }
       const layer = doc.activeLayers[0];
 
+      const docW = typeof doc.width === "number" ? doc.width : Math.round(Number(doc.width) || 1000);
+      const docH = typeof doc.height === "number" ? doc.height : Math.round(Number(doc.height) || 1000);
+
       await core.executeAsModal(
         async () => {
+          // Full-document bounds so layer aligns pixel-for-pixel across full canvas
+          const sourceBounds = { left: 0, top: 0, right: docW, bottom: docH };
+
           /** @type {any} */
           const opts = {
             layerID: layer.id,
             componentSize: 8,
             colorSpace: "RGB",
             applyAlpha: false,
+            sourceBounds: sourceBounds,
           };
+
+          // Preserve Aspect Ratio on Preview:
+          // When maxPreviewDim is set, compute aspect-correct dimensions
           if (msg.maxPreviewDim) {
+            const boundsW = docW;
+            const boundsH = docH;
+            const scale = Math.min(1, msg.maxPreviewDim / Math.max(boundsW, boundsH));
             opts.targetSize = {
-              width: msg.maxPreviewDim,
-              height: msg.maxPreviewDim,
+              width: Math.max(1, Math.round(boundsW * scale)),
+              height: Math.max(1, Math.round(boundsH * scale)),
             };
           }
 
@@ -229,6 +242,9 @@ async function handle(rawMsg) {
             height,
             channels,
             base64,
+            purpose: msg.purpose || (msg.maxPreviewDim ? "PREVIEW" : "COMMIT"),
+            docWidth: docW,
+            docHeight: docH,
           });
 
           pixelObj.imageData.dispose();
@@ -253,10 +269,14 @@ async function handle(rawMsg) {
           if (!doc) {
             throw new Error("No active document found in Photoshop.");
           }
+
+          const docW = typeof doc.width === "number" ? doc.width : Math.round(Number(doc.width) || msg.width);
+          const docH = typeof doc.height === "number" ? doc.height : Math.round(Number(doc.height) || msg.height);
+
           const newLayer = await doc.createLayer({
             name: msg.name || "GlowX Effect",
             opacity: msg.opacity ?? 100,
-            blendMode: msg.blendMode || "normal",
+            blendMode: msg.blendMode || "screen",
           });
 
           let uint8;
@@ -279,7 +299,19 @@ async function handle(rawMsg) {
             colorSpace: "RGB",
           });
 
-          await imaging.putPixels({ layerID: newLayer.id, imageData });
+          // Pass targetBounds matching the full document bounds for pixel-for-pixel alignment
+          const targetBounds = {
+            left: 0,
+            top: 0,
+            right: docW,
+            bottom: docH,
+          };
+
+          await imaging.putPixels({
+            layerID: newLayer.id,
+            imageData: imageData,
+            targetBounds: targetBounds,
+          });
           imageData.dispose();
         },
         { commandName: `GlowX – Apply ${msg.name || "Effect"}` }

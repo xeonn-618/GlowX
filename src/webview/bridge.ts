@@ -197,6 +197,9 @@ export function onUxpMessage(
           height: Number(msg.height),
           channels: Number(msg.channels),
           buffer: uint8,
+          purpose: msg.purpose as "PREVIEW" | "COMMIT" | undefined,
+          docWidth: msg.docWidth ? Number(msg.docWidth) : undefined,
+          docHeight: msg.docHeight ? Number(msg.docHeight) : undefined,
         });
         return;
       }
