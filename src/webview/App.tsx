@@ -8,7 +8,7 @@ interface LayerPixels {
   width: number;
   height: number;
   channels: number;
-  buffer: ArrayBuffer;
+  buffer: Uint8Array;
 }
 
 type Status = "idle" | "loading" | "ready" | "committing" | "error";
@@ -54,7 +54,11 @@ export default function App() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const rgba = new Uint8ClampedArray(buffer);
+    const rgba = new Uint8ClampedArray(
+      buffer.buffer as ArrayBuffer,
+      buffer.byteOffset,
+      buffer.byteLength
+    );
     const imageData = new ImageData(rgba, width, height);
     ctx.putImageData(imageData, 0, 0);
   }, [layerPixels]);

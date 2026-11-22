@@ -2,7 +2,7 @@
 // Import from both sides; no runtime code – types only.
 
 export type WebViewToUxpMessage =
-  | { type: "REQUEST_ACTIVE_LAYER"; maxPreviewDim?: number }
+  | { type: "REQUEST_ACTIVE_LAYER"; maxPreviewDim?: number; _msgId?: string }
   | {
       type: "COMMIT_LAYER";
       name: string;
@@ -10,7 +10,9 @@ export type WebViewToUxpMessage =
       height: number;
       blendMode: string;
       opacity: number;
-      buffer: ArrayBuffer;
+      buffer: ArrayBuffer | Uint8Array | string;
+      base64?: string;
+      _msgId?: string;
     };
 
 export type UxpToWebViewMessage =
@@ -19,7 +21,8 @@ export type UxpToWebViewMessage =
       width: number;
       height: number;
       channels: number;
-      buffer: ArrayBuffer;
+      buffer: Uint8Array;
+      base64?: string;
     }
   | { type: "COMMIT_DONE" }
   | { type: "ERROR"; message: string };
