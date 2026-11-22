@@ -18,6 +18,7 @@ interface Preset {
   id: string;
   name: string;
   options: Partial<GlowEngineOptions>;
+  isCustom?: boolean;
 }
 
 const PRESETS: Preset[] = [
@@ -30,9 +31,13 @@ const PRESETS: Preset[] = [
       threshold: 0.15,
       knee: 0.5,
       falloff: 1.0,
+      aspectRatio: 1.0,
+      angle: 0.0,
       chromaShift: 2.0,
       exposure: 0.0,
+      saturation: 1.0,
       rolloff: 1.0,
+      dither: 0.5,
       tint: "#f4f4f6",
       blendMode: "screen",
     },
@@ -41,14 +46,18 @@ const PRESETS: Preset[] = [
     id: "deepAnamorphic",
     name: "Deep Anamorphic",
     options: {
-      intensity: 2.8,
-      radius: 28.0,
+      intensity: 3.0,
+      radius: 30.0,
       threshold: 0.08,
       knee: 0.7,
-      falloff: 0.65,
+      falloff: 0.6,
+      aspectRatio: 3.2,
+      angle: 0.0,
       chromaShift: 4.5,
       exposure: 0.2,
+      saturation: 1.25,
       rolloff: 1.4,
+      dither: 0.6,
       tint: "#7dd3fc",
       blendMode: "screen",
     },
@@ -62,9 +71,13 @@ const PRESETS: Preset[] = [
       threshold: 0.25,
       knee: 0.4,
       falloff: 1.6,
+      aspectRatio: 1.0,
+      angle: 0.0,
       chromaShift: 1.0,
       exposure: -0.2,
+      saturation: 0.9,
       rolloff: 1.8,
+      dither: 0.8,
       tint: "#f4f4f6",
       blendMode: "screen",
     },
@@ -78,9 +91,13 @@ const PRESETS: Preset[] = [
       threshold: 0.12,
       knee: 0.6,
       falloff: 0.9,
+      aspectRatio: 1.15,
+      angle: 0.0,
       chromaShift: 3.2,
       exposure: 0.1,
+      saturation: 1.4,
       rolloff: 1.2,
+      dither: 0.5,
       tint: "#f59e0b",
       blendMode: "linearDodge",
     },
@@ -94,9 +111,13 @@ const PRESETS: Preset[] = [
       threshold: 0.05,
       knee: 0.8,
       falloff: 0.8,
+      aspectRatio: 2.2,
+      angle: 15.0,
       chromaShift: 5.5,
       exposure: 0.3,
+      saturation: 1.8,
       rolloff: 0.8,
+      dither: 0.5,
       tint: "#ec4899",
       blendMode: "linearDodge",
     },
@@ -110,9 +131,13 @@ const PRESETS: Preset[] = [
       threshold: 0.1,
       knee: 0.5,
       falloff: 1.1,
+      aspectRatio: 1.8,
+      angle: -5.0,
       chromaShift: 3.0,
       exposure: 0.0,
+      saturation: 1.3,
       rolloff: 1.1,
+      dither: 0.6,
       tint: "#38bdf8",
       blendMode: "screen",
     },
@@ -138,6 +163,19 @@ export default function App() {
   const [status, setStatus] = useState<Status>("idle");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [layerPixels, setLayerPixels] = useState<LayerPixels | null>(null);
+
+  // Custom presets from localStorage
+  const [customPresets, setCustomPresets] = useState<Preset[]>(() => {
+    try {
+      const saved = localStorage.getItem("glowx_custom_presets");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [isCreatingPreset, setIsCreatingPreset] = useState(false);
+  const [newPresetName, setNewPresetName] = useState("");
 
   // Settings State
   const [options, setOptions] = useState<GlowEngineOptions>({
@@ -189,12 +227,19 @@ export default function App() {
     [triggerRender]
   );
 
+  // All Presets combined (Built-in + Custom)
+  const allPresets = [...PRESETS, ...customPresets];
+  const activePreset = allPresets.find((p) => p.id === selectedPreset);
+  const activePresetName = activePreset ? activePreset.name : "Deep Glow";
+
   // ── UXP Host IPC Setup ─────────────────────────────────────────────────────
   useEffect(() => {
     const unsubscribe = onUxpMessage((msg) => {
       if (msg.type === "LAYER_PIXELS") {
         if (msg.purpose === "COMMIT") {
           // Offscreen full-resolution GPU pass
+          // For Screen or Linear Dodge additive blend modes, render isolated Effect Only
+          // (glow RGB on solid black with alpha 1.0) so Photoshop does not double-expose.
           try {
             const fullResBuffer = renderGlowOffscreen(
               msg.buffer,
@@ -205,7 +250,7 @@ export default function App() {
 
             sendToUxp({
               type: "COMMIT_LAYER",
-              name: "GlowX Deep Glow",
+              name: `GlowX - ${activePresetName}`,
               width: msg.width,
               height: msg.height,
               blendMode:
@@ -242,7 +287,7 @@ export default function App() {
     });
 
     return unsubscribe;
-  }, [options]);
+  }, [options, activePresetName]);
 
   // ── Initialize or resize preview canvas and WebGL2 engine ─────────────────
   useEffect(() => {
@@ -299,7 +344,7 @@ export default function App() {
 
   const handlePresetSelect = (presetId: string) => {
     setSelectedPreset(presetId);
-    const found = PRESETS.find((p) => p.id === presetId);
+    const found = allPresets.find((p) => p.id === presetId);
     if (found) {
       const newOpts: GlowEngineOptions = {
         ...options,
@@ -319,6 +364,35 @@ export default function App() {
     };
     setOptions(newOpts);
     triggerRender(newOpts);
+  };
+
+  const handleSavePreset = () => {
+    const trimmed = newPresetName.trim();
+    if (!trimmed) return;
+    const newPreset: Preset = {
+      id: `custom_${Date.now()}`,
+      name: trimmed,
+      options: { ...options },
+      isCustom: true,
+    };
+    const next = [...customPresets, newPreset];
+    setCustomPresets(next);
+    try {
+      localStorage.setItem("glowx_custom_presets", JSON.stringify(next));
+    } catch {}
+    setSelectedPreset(newPreset.id);
+    setIsCreatingPreset(false);
+    setNewPresetName("");
+  };
+
+  const handleDeleteCustomPreset = (id: string) => {
+    const next = customPresets.filter((p) => p.id !== id);
+    setCustomPresets(next);
+    try {
+      localStorage.setItem("glowx_custom_presets", JSON.stringify(next));
+    } catch {}
+    setSelectedPreset("default");
+    handlePresetSelect("default");
   };
 
   const isLoading = status === "loading";
@@ -374,12 +448,47 @@ export default function App() {
             disabled={isBusy}
             title="Optical Glow Presets"
           >
-            {PRESETS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
+            <optgroup label="Built-in Presets">
+              {PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </optgroup>
+            {customPresets.length > 0 && (
+              <optgroup label="Custom User Presets">
+                {customPresets.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
+
+          {/* Add Custom Preset Button */}
+          <button
+            className={styles.btnAddPreset}
+            onClick={() => setIsCreatingPreset((prev) => !prev)}
+            disabled={isBusy}
+            title="Save current parameters as custom preset"
+            aria-label="Save custom preset"
+          >
+            +
+          </button>
+
+          {/* Delete Custom Preset Button if currently selected */}
+          {activePreset?.isCustom && (
+            <button
+              className={styles.btnDeletePreset}
+              onClick={() => handleDeleteCustomPreset(activePreset.id)}
+              disabled={isBusy}
+              title="Delete this custom preset"
+              aria-label="Delete custom preset"
+            >
+              ✕
+            </button>
+          )}
 
           <button
             className={styles.btnReset}
@@ -425,6 +534,34 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* ── Save Preset Inline Tray ────────────────────────────────────── */}
+      {isCreatingPreset && (
+        <div className={styles.savePresetBar}>
+          <span className={styles.savePresetLabel}>NEW PRESET:</span>
+          <input
+            type="text"
+            className={styles.savePresetInput}
+            placeholder="Preset Name..."
+            value={newPresetName}
+            onChange={(e) => setNewPresetName(e.target.value)}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSavePreset();
+              if (e.key === "Escape") setIsCreatingPreset(false);
+            }}
+          />
+          <button className={styles.savePresetBtn} onClick={handleSavePreset}>
+            SAVE
+          </button>
+          <button
+            className={styles.cancelPresetBtn}
+            onClick={() => setIsCreatingPreset(false)}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* ── 2. Live Preview Viewport ────────────────────────────────────── */}
       <section className={styles.viewportSection}>
@@ -631,6 +768,35 @@ export default function App() {
                 disabled={isBusy}
               />
 
+              {/* Anamorphic Stretch & Streak Angle */}
+              <div className={styles.twoColRow}>
+                <Slider
+                  label="Anamorphic Stretch"
+                  value={options.aspectRatio}
+                  min={0.2}
+                  max={5.0}
+                  step={0.1}
+                  precision={1}
+                  unit="x"
+                  defaultValue={1.0}
+                  onChange={(v) => updateOption("aspectRatio", v)}
+                  disabled={isBusy}
+                />
+                <Slider
+                  label="Streak Angle"
+                  value={options.angle}
+                  min={-90.0}
+                  max={90.0}
+                  step={1.0}
+                  precision={0}
+                  unit="°"
+                  defaultValue={0.0}
+                  onChange={(v) => updateOption("angle", v)}
+                  disabled={isBusy}
+                />
+              </div>
+
+              {/* Chroma Shift & Highlight Roll-off */}
               <div className={styles.twoColRow}>
                 <Slider
                   label="Chroma Shift (R/B)"
@@ -657,16 +823,43 @@ export default function App() {
                 />
               </div>
 
+              {/* Exposure & Glow Saturation */}
+              <div className={styles.twoColRow}>
+                <Slider
+                  label="Exposure"
+                  value={options.exposure}
+                  min={-3.0}
+                  max={3.0}
+                  step={0.1}
+                  precision={1}
+                  unit="EV"
+                  defaultValue={0.0}
+                  onChange={(v) => updateOption("exposure", v)}
+                  disabled={isBusy}
+                />
+                <Slider
+                  label="Glow Saturation"
+                  value={options.saturation}
+                  min={0.0}
+                  max={3.0}
+                  step={0.05}
+                  precision={2}
+                  defaultValue={1.0}
+                  onChange={(v) => updateOption("saturation", v)}
+                  disabled={isBusy}
+                />
+              </div>
+
+              {/* Anti-Banding Dither */}
               <Slider
-                label="Exposure"
-                value={options.exposure}
-                min={-3.0}
-                max={3.0}
-                step={0.1}
-                precision={1}
-                unit="EV"
-                defaultValue={0.0}
-                onChange={(v) => updateOption("exposure", v)}
+                label="Anti-Banding Dither"
+                value={options.dither}
+                min={0.0}
+                max={2.0}
+                step={0.05}
+                precision={2}
+                defaultValue={0.5}
+                onChange={(v) => updateOption("dither", v)}
                 disabled={isBusy}
               />
             </div>

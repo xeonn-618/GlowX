@@ -113,6 +113,8 @@
   border-color: var(--border-active);
 }
 
+.btnAddPreset,
+.btnDeletePreset,
 .btnReset {
   display: flex;
   align-items: center;
@@ -125,10 +127,104 @@
   color: var(--text-secondary);
   cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+  flex-shrink: 0;
 }
 
+.btnAddPreset:hover,
+.btnDeletePreset:hover,
 .btnReset:hover {
   background-color: var(--bg-control-hover);
+  color: var(--text-primary);
+  border-color: var(--border-active);
+}
+
+.btnDeletePreset:hover {
+  color: var(--status-error);
+  border-color: var(--status-error);
+}
+
+/* Save Preset Inline Bar */
+.savePresetBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background-color: var(--bg-surface);
+  border-bottom: 1px solid var(--border-grid);
+  animation: slideDown 120ms ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.savePresetLabel {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.savePresetInput {
+  flex: 1;
+  height: 26px;
+  background-color: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  font-size: 11.5px;
+  padding: 0 8px;
+  outline: none;
+  transition: border-color 100ms ease;
+}
+
+.savePresetInput:focus {
+  border-color: var(--border-active);
+}
+
+.savePresetBtn {
+  height: 26px;
+  padding: 0 10px;
+  background-color: var(--cta-bg);
+  border: 1px solid var(--cta-bg);
+  border-radius: var(--radius-control);
+  color: var(--cta-text);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 100ms ease;
+}
+
+.savePresetBtn:hover {
+  opacity: 0.9;
+}
+
+.cancelPresetBtn {
+  height: 26px;
+  width: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 100ms ease, border-color 100ms ease;
+}
+
+.cancelPresetBtn:hover {
   color: var(--text-primary);
   border-color: var(--border-active);
 }

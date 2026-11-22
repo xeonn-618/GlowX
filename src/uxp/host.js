@@ -120,6 +120,21 @@ function sendToWebView(payload) {
   }
 }
 
+function getDocDimensions(doc) {
+  let w = doc.width;
+  let h = doc.height;
+  if (typeof w === "object" && w !== null) {
+    w = typeof w.as === "function" ? w.as("px") : (w.value || Number(w));
+  }
+  if (typeof h === "object" && h !== null) {
+    h = typeof h.as === "function" ? h.as("px") : (h.value || Number(h));
+  }
+  return {
+    width: Math.max(1, Math.round(Number(w) || 1000)),
+    height: Math.max(1, Math.round(Number(h) || 1000)),
+  };
+}
+
 // ── Deduplication Guard ──────────────────────────────────────────────────────
 const processedMessageIds = new Set();
 let lastSignature = "";
@@ -182,72 +197,137 @@ async function handle(rawMsg) {
       }
       const layer = doc.activeLayers[0];
 
-      const docW = typeof doc.width === "number" ? doc.width : Math.round(Number(doc.width) || 1000);
-      const docH = typeof doc.height === "number" ? doc.height : Math.round(Number(doc.height) || 1000);
+      const { width: docW, height: docH } = getDocDimensions(doc);
 
       await core.executeAsModal(
         async () => {
-          // Full-document bounds so layer aligns pixel-for-pixel across full canvas
-          const sourceBounds = { left: 0, top: 0, right: docW, bottom: docH };
-
-          /** @type {any} */
+          // 1. Read layer pixels WITHOUT sourceBounds or targetSize so Photoshop
+          // returns the exact non-transparent pixel rectangle and sourceBounds.
           const opts = {
             layerID: layer.id,
             componentSize: 8,
             colorSpace: "RGB",
             applyAlpha: false,
-            sourceBounds: sourceBounds,
           };
-
-          // Preserve Aspect Ratio on Preview:
-          // When maxPreviewDim is set, compute aspect-correct dimensions
-          if (msg.maxPreviewDim) {
-            const boundsW = docW;
-            const boundsH = docH;
-            const scale = Math.min(1, msg.maxPreviewDim / Math.max(boundsW, boundsH));
-            opts.targetSize = {
-              width: Math.max(1, Math.round(boundsW * scale)),
-              height: Math.max(1, Math.round(boundsH * scale)),
-            };
-          }
 
           const pixelObj = await imaging.getPixels(opts);
           const rawData = await pixelObj.imageData.getData(); // Uint8Array
-          let channels = pixelObj.imageData.components;
-          const width = pixelObj.imageData.width;
-          const height = pixelObj.imageData.height;
+          const channels = pixelObj.imageData.components;
+          const layerW = pixelObj.imageData.width;
+          const layerH = pixelObj.imageData.height;
 
-          let pixelData = rawData;
-          // If channels === 3, pad an opaque 255 alpha channel so buffer is strictly width * height * 4
-          if (channels === 3) {
-            const pixelCount = width * height;
-            const rgba = new Uint8Array(pixelCount * 4);
-            for (let i = 0, j = 0; i < pixelCount; i++, j += 3) {
-              const dest = i * 4;
-              rgba[dest]     = rawData[j];       // R
-              rgba[dest + 1] = rawData[j + 1];   // G
-              rgba[dest + 2] = rawData[j + 2];   // B
-              rgba[dest + 3] = 255;             // A (opaque)
+          // Read sourceBounds (provides layer's exact document coordinates)
+          const b = pixelObj.sourceBounds || layer.bounds || { left: 0, top: 0, right: docW, bottom: docH };
+          let bLeft = typeof b.left === "object" && b.left !== null
+            ? (typeof b.left.as === "function" ? b.left.as("px") : (b.left.value || Number(b.left)))
+            : Number(b.left || 0);
+          let bTop = typeof b.top === "object" && b.top !== null
+            ? (typeof b.top.as === "function" ? b.top.as("px") : (b.top.value || Number(b.top)))
+            : Number(b.top || 0);
+          const left = Math.round(bLeft);
+          const top = Math.round(bTop);
+
+          // 2. Composite Layer into Full-Document Canvas Buffer (docW x docH)
+          // Allocate zero-filled Uint8Array of size docW * docH * 4 (transparent black RGBA)
+          const fullDocBuffer = new Uint8Array(docW * docH * 4);
+
+          // Copy layer rows into fullDocBuffer offset by (left, top) with safe clipping
+          const startY = Math.max(0, top);
+          const endY = Math.min(docH, top + layerH);
+          const startX = Math.max(0, left);
+          const endX = Math.min(docW, left + layerW);
+
+          if (startX < endX && startY < endY) {
+            const copyWidth = endX - startX;
+            for (let y = startY; y < endY; y++) {
+              const layerY = y - top;
+              const destRowOffset = (y * docW + startX) * 4;
+              const srcRowOffset = (layerY * layerW + (startX - left)) * channels;
+
+              if (channels === 4) {
+                fullDocBuffer.set(
+                  rawData.subarray(srcRowOffset, srcRowOffset + copyWidth * 4),
+                  destRowOffset
+                );
+              } else {
+                for (let x = 0; x < copyWidth; x++) {
+                  const s = srcRowOffset + x * 3;
+                  const d = destRowOffset + x * 4;
+                  fullDocBuffer[d]     = rawData[s];
+                  fullDocBuffer[d + 1] = rawData[s + 1];
+                  fullDocBuffer[d + 2] = rawData[s + 2];
+                  fullDocBuffer[d + 3] = 255;
+                }
+              }
             }
-            pixelData = rgba;
-            channels = 4;
           }
 
-          // Encode buffer as Base64 string so UXP's <webview> IPC bridge never drops binary buffers
-          const base64 = uint8ToBase64(pixelData);
+          pixelObj.imageData.dispose();
+
+          // 3. For preview (when maxPreviewDim is set), downsample the full-document RGBA buffer
+          // preserving docW / docH aspect ratio via smooth bilinear box sampling in JS.
+          let outBuffer = fullDocBuffer;
+          let outW = docW;
+          let outH = docH;
+
+          if (msg.maxPreviewDim && (docW > msg.maxPreviewDim || docH > msg.maxPreviewDim)) {
+            const scale = Math.min(1, msg.maxPreviewDim / Math.max(docW, docH));
+            const previewW = Math.max(1, Math.round(docW * scale));
+            const previewH = Math.max(1, Math.round(docH * scale));
+            const previewBuffer = new Uint8Array(previewW * previewH * 4);
+
+            const scaleX = docW / previewW;
+            const scaleY = docH / previewH;
+
+            for (let py = 0; py < previewH; py++) {
+              const gy = py * scaleY;
+              const y0 = Math.floor(gy);
+              const y1 = Math.min(docH - 1, y0 + 1);
+              const wy = gy - y0;
+              const destRow = py * previewW * 4;
+
+              for (let px = 0; px < previewW; px++) {
+                const gx = px * scaleX;
+                const x0 = Math.floor(gx);
+                const x1 = Math.min(docW - 1, x0 + 1);
+                const wx = gx - x0;
+
+                const i00 = (y0 * docW + x0) * 4;
+                const i10 = (y0 * docW + x1) * 4;
+                const i01 = (y1 * docW + x0) * 4;
+                const i11 = (y1 * docW + x1) * 4;
+
+                const d = destRow + px * 4;
+
+                const w00 = (1 - wx) * (1 - wy);
+                const w10 = wx * (1 - wy);
+                const w01 = (1 - wx) * wy;
+                const w11 = wx * wy;
+
+                previewBuffer[d]     = Math.round(fullDocBuffer[i00] * w00 + fullDocBuffer[i10] * w10 + fullDocBuffer[i01] * w01 + fullDocBuffer[i11] * w11);
+                previewBuffer[d + 1] = Math.round(fullDocBuffer[i00 + 1] * w00 + fullDocBuffer[i10 + 1] * w10 + fullDocBuffer[i01 + 1] * w01 + fullDocBuffer[i11 + 1] * w11);
+                previewBuffer[d + 2] = Math.round(fullDocBuffer[i00 + 2] * w00 + fullDocBuffer[i10 + 2] * w10 + fullDocBuffer[i01 + 2] * w01 + fullDocBuffer[i11 + 2] * w11);
+                previewBuffer[d + 3] = Math.round(fullDocBuffer[i00 + 3] * w00 + fullDocBuffer[i10 + 3] * w10 + fullDocBuffer[i01 + 3] * w01 + fullDocBuffer[i11 + 3] * w11);
+              }
+            }
+
+            outBuffer = previewBuffer;
+            outW = previewW;
+            outH = previewH;
+          }
+
+          const base64 = uint8ToBase64(outBuffer);
 
           sendToWebView({
             type: "LAYER_PIXELS",
-            width,
-            height,
-            channels,
+            width: outW,
+            height: outH,
+            channels: 4,
             base64,
             purpose: msg.purpose || (msg.maxPreviewDim ? "PREVIEW" : "COMMIT"),
             docWidth: docW,
             docHeight: docH,
           });
-
-          pixelObj.imageData.dispose();
         },
         { commandName: "GlowX – Read Layer Pixels" }
       );
@@ -270,19 +350,16 @@ async function handle(rawMsg) {
             throw new Error("No active document found in Photoshop.");
           }
 
-          const docW = typeof doc.width === "number" ? doc.width : Math.round(Number(doc.width) || msg.width);
-          const docH = typeof doc.height === "number" ? doc.height : Math.round(Number(doc.height) || msg.height);
-
           let newLayer;
           try {
             newLayer = await doc.createLayer({
-              name: msg.name || "GlowX Effect",
+              name: msg.name || "GlowX - Deep Glow",
               opacity: msg.opacity ?? 100,
               blendMode: msg.blendMode || "screen",
             });
           } catch (layerErr) {
             newLayer = await doc.createLayer({
-              name: msg.name || "GlowX Effect",
+              name: msg.name || "GlowX - Deep Glow",
               opacity: msg.opacity ?? 100,
               blendMode: "screen",
             });
@@ -308,22 +385,16 @@ async function handle(rawMsg) {
             colorSpace: "RGB",
           });
 
-          // Pass targetBounds matching the full document bounds for pixel-for-pixel alignment
-          const targetBounds = {
-            left: 0,
-            top: 0,
-            right: docW,
-            bottom: docH,
-          };
-
+          // Buffer is already full-document size (docW x docH).
+          // Calling putPixels without targetBounds offset stamps it at (0, 0)
+          // covering the full canvas and matching document coordinates exactly.
           await imaging.putPixels({
             layerID: newLayer.id,
             imageData: imageData,
-            targetBounds: targetBounds,
           });
           imageData.dispose();
         },
-        { commandName: `GlowX – Apply ${msg.name || "Effect"}` }
+        { commandName: `GlowX – Apply ${msg.name || "Deep Glow"}` }
       );
 
       sendToWebView({ type: "COMMIT_DONE" });

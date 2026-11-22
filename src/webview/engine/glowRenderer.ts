@@ -1,7 +1,7 @@
 // GlowX – Dual-Kawase HDR Bloom WebGL2 Shader Engine
-// Features 6-level RGBA16F FBO pyramid, Threshold+Knee prefilter,
-// 5-tap Dual-Kawase downsample/upsample with inverse-square falloff,
-// Tint, Radial Chromatic Aberration, Exposure, and Soft Highlight Roll-Off.
+// Features 6-level RGBA16F FBO pyramid, Premultiplied Alpha Threshold+Knee prefilter,
+// Anamorphic stretch & Angle directional offsets, Inverse-square falloff,
+// Tint, Radial Chromatic Aberration, Saturation, Exposure, Soft Roll-Off, and Anti-Banding Dither.
 
 export interface GlowEngineOptions {
   intensity: number;       // 0.0 – 5.0
@@ -9,9 +9,13 @@ export interface GlowEngineOptions {
   threshold: number;       // 0.0 – 1.0
   knee: number;            // 0.0 – 1.0
   falloff: number;         // 0.1 – 3.0 (inverse-square decay)
+  aspectRatio: number;     // 0.2 – 5.0 (horizontal/vertical anamorphic stretch)
+  angle: number;           // -90 – +90 degrees
   chromaShift: number;     // 0.0 – 20.0 (radial R/B shift)
   exposure: number;        // -3.0 – +3.0 EV
+  saturation: number;      // 0.0 – 3.0 (color vibrancy)
   rolloff: number;         // 0.0 – 2.0 (filmic shoulder)
+  dither: number;          // 0.0 – 2.0 (anti-banding screen dither)
   tint: string;            // hex color string e.g. "#f4f4f6"
   blendMode: "screen" | "linearDodge";
   viewMode: "composite" | "effectOnly" | "split";
@@ -25,9 +29,13 @@ export const DEFAULT_GLOW_OPTIONS: GlowEngineOptions = {
   threshold: 0.15,
   knee: 0.5,
   falloff: 1.0,
+  aspectRatio: 1.0,
+  angle: 0.0,
   chromaShift: 2.0,
   exposure: 0.0,
+  saturation: 1.0,
   rolloff: 1.0,
+  dither: 0.5,
   tint: "#f4f4f6",
   blendMode: "screen",
   viewMode: "composite",
@@ -47,7 +55,9 @@ void main() {
 }
 `;
 
-// Prefilter: isolates highlights using soft knee curve
+// Pass 1: Prefilter with Premultiplied Alpha
+// Multiplies texColor.rgb * texColor.a BEFORE computing luminance and threshold
+// so semi-transparent PNG edges and faint drop shadows never ignite into hard glowing outlines.
 const FS_PREFILTER = `#version 300 es
 precision highp float;
 
@@ -59,8 +69,11 @@ uniform float u_threshold;
 uniform float u_knee;
 
 void main() {
-  vec4 color = texture(u_image, v_uv);
-  float brightness = max(color.r, max(color.g, color.b));
+  vec4 texColor = texture(u_image, v_uv);
+  
+  // Premultiply alpha: eliminates edge halos and false threshold triggers on transparent PNGs
+  vec3 src = texColor.rgb * texColor.a;
+  float brightness = max(src.r, max(src.g, src.b));
   
   // Soft knee: smooth transition around threshold to prevent hard staircasing
   float knee = max(0.0001, u_threshold * u_knee);
@@ -71,11 +84,11 @@ void main() {
   float contribution = max(soft, brightness - u_threshold) / max(brightness, 0.00001);
   contribution = clamp(contribution, 0.0, 1.0);
   
-  fragColor = vec4(color.rgb * contribution, color.a * contribution);
+  fragColor = vec4(src * contribution, texColor.a * contribution);
 }
 `;
 
-// Dual-Kawase Downsample: 5 taps (center 4.0, 4 diagonal corners 1.0 each)
+// Dual-Kawase Downsample with Anamorphic Stretch & Directional Angle
 const FS_DOWNSAMPLE = `#version 300 es
 precision highp float;
 
@@ -85,21 +98,36 @@ out vec4 fragColor;
 uniform sampler2D u_image;
 uniform vec2 u_texelSize;
 uniform float u_offset;
+uniform vec2 u_anamorphicScale;
+uniform vec2 u_rotCosSin;
+
+vec2 transformOffset(vec2 off) {
+  vec2 scaled = off * u_anamorphicScale;
+  return vec2(
+    scaled.x * u_rotCosSin.x - scaled.y * u_rotCosSin.y,
+    scaled.x * u_rotCosSin.y + scaled.y * u_rotCosSin.x
+  );
+}
 
 void main() {
   vec2 halfPixel = u_texelSize * u_offset;
   
+  vec2 off1 = transformOffset(vec2(-1.0, -1.0)) * halfPixel;
+  vec2 off2 = transformOffset(vec2(1.0, -1.0)) * halfPixel;
+  vec2 off3 = transformOffset(vec2(-1.0, 1.0)) * halfPixel;
+  vec2 off4 = transformOffset(vec2(1.0, 1.0)) * halfPixel;
+  
   vec4 sum = texture(u_image, v_uv) * 4.0;
-  sum += texture(u_image, v_uv - halfPixel);
-  sum += texture(u_image, v_uv + halfPixel);
-  sum += texture(u_image, v_uv + vec2(halfPixel.x, -halfPixel.y));
-  sum += texture(u_image, v_uv + vec2(-halfPixel.x, halfPixel.y));
+  sum += texture(u_image, v_uv + off1);
+  sum += texture(u_image, v_uv + off2);
+  sum += texture(u_image, v_uv + off3);
+  sum += texture(u_image, v_uv + off4);
   
   fragColor = sum * 0.125;
 }
 `;
 
-// Dual-Kawase Upsample: 5-tap tent filter with inverse-square falloff accumulation
+// Dual-Kawase Upsample with Anamorphic Stretch, Directional Angle & Inverse-Square Falloff
 const FS_UPSAMPLE = `#version 300 es
 precision highp float;
 
@@ -111,20 +139,29 @@ uniform sampler2D u_lowerLevel;
 uniform vec2 u_texelSize;
 uniform float u_offset;
 uniform float u_weight;
+uniform vec2 u_anamorphicScale;
+uniform vec2 u_rotCosSin;
+
+vec2 transformOffset(vec2 off) {
+  vec2 scaled = off * u_anamorphicScale;
+  return vec2(
+    scaled.x * u_rotCosSin.x - scaled.y * u_rotCosSin.y,
+    scaled.x * u_rotCosSin.y + scaled.y * u_rotCosSin.x
+  );
+}
 
 void main() {
   vec2 halfPixel = u_texelSize * u_offset;
   
-  // 5-tap Dual Kawase upsample kernel
   vec4 lower = texture(u_lowerLevel, v_uv) * 4.0;
-  lower += texture(u_lowerLevel, v_uv + vec2(-halfPixel.x * 2.0, 0.0));
-  lower += texture(u_lowerLevel, v_uv + vec2(halfPixel.x * 2.0, 0.0));
-  lower += texture(u_lowerLevel, v_uv + vec2(0.0, -halfPixel.y * 2.0));
-  lower += texture(u_lowerLevel, v_uv + vec2(0.0, halfPixel.y * 2.0));
-  lower += texture(u_lowerLevel, v_uv + vec2(-halfPixel.x, -halfPixel.y)) * 2.0;
-  lower += texture(u_lowerLevel, v_uv + vec2(halfPixel.x, -halfPixel.y)) * 2.0;
-  lower += texture(u_lowerLevel, v_uv + vec2(-halfPixel.x, halfPixel.y)) * 2.0;
-  lower += texture(u_lowerLevel, v_uv + vec2(halfPixel.x, halfPixel.y)) * 2.0;
+  lower += texture(u_lowerLevel, v_uv + transformOffset(vec2(-2.0, 0.0)) * halfPixel);
+  lower += texture(u_lowerLevel, v_uv + transformOffset(vec2(2.0, 0.0)) * halfPixel);
+  lower += texture(u_lowerLevel, v_uv + transformOffset(vec2(0.0, -2.0)) * halfPixel);
+  lower += texture(u_lowerLevel, v_uv + transformOffset(vec2(0.0, 2.0)) * halfPixel);
+  lower += texture(u_lowerLevel, v_uv + transformOffset(vec2(-1.0, -1.0)) * halfPixel) * 2.0;
+  lower += texture(u_lowerLevel, v_uv + transformOffset(vec2(1.0, -1.0)) * halfPixel) * 2.0;
+  lower += texture(u_lowerLevel, v_uv + transformOffset(vec2(-1.0, 1.0)) * halfPixel) * 2.0;
+  lower += texture(u_lowerLevel, v_uv + transformOffset(vec2(1.0, 1.0)) * halfPixel) * 2.0;
   lower *= (1.0 / 16.0);
   
   vec4 current = texture(u_currentLevel, v_uv);
@@ -132,8 +169,8 @@ void main() {
 }
 `;
 
-// Final Composite: Tint, Radial Chromatic Aberration, Exposure, Soft Roll-Off,
-// Screen vs Linear Dodge blend, and Split wipe view.
+// Final Composite: Tint, Radial Chromatic Aberration, Saturation, Exposure,
+// Soft Highlight Roll-Off, Screen / Linear Dodge blend, and Anti-Banding Dither.
 const FS_COMPOSITE = `#version 300 es
 precision highp float;
 
@@ -148,7 +185,9 @@ uniform float u_intensity;
 uniform vec3 u_tint;
 uniform float u_chromaShift;
 uniform float u_exposure;
+uniform float u_saturation;
 uniform float u_rolloff;
+uniform float u_dither;
 
 uniform int u_blendMode; // 0 = Screen, 1 = Linear Dodge
 uniform int u_viewMode;  // 0 = Composite, 1 = Effect Only, 2 = Split
@@ -172,18 +211,20 @@ void main() {
   float glowR = texture(u_glowImage, uv + caOffset).r;
   float glowG = texture(u_glowImage, uv).g;
   float glowB = texture(u_glowImage, uv - caOffset).b;
-  float glowA = texture(u_glowImage, uv).a;
   vec3 glowRgb = vec3(glowR, glowG, glowB);
   
   // Tint application
   glowRgb = glowRgb * u_tint;
+  
+  // Glow Saturation adjustment
+  float lum = dot(glowRgb, vec3(0.2126, 0.7152, 0.0722));
+  glowRgb = mix(vec3(lum), glowRgb, u_saturation);
   
   // Exposure (2^EV)
   glowRgb = glowRgb * exp2(u_exposure);
   
   // Master Intensity
   glowRgb = glowRgb * u_intensity;
-  float glowAlpha = glowA * u_intensity;
   
   // Soft highlight roll-off (filmic shoulder to prevent harsh blown highlights)
   if (u_rolloff > 0.001) {
@@ -191,21 +232,29 @@ void main() {
     glowRgb = glowRgb / (1.0 + glowRgb * shoulder);
   }
   
-  // Blend calculations
+  // Anti-Banding Screen Dither (TPDF dither to eliminate 8-bit banding on smooth gradients)
+  if (u_dither > 0.001) {
+    float d1 = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    float d2 = fract(sin(dot(gl_FragCoord.xy + 0.5, vec2(12.9898, 78.233))) * 43758.5453);
+    float ditherVal = ((d1 + d2 - 1.0) / 255.0) * u_dither;
+    glowRgb = max(vec3(0.0), glowRgb + ditherVal);
+  }
+  
+  // Blend calculations for Composite
   vec3 compositeRgb;
   if (u_blendMode == 1) {
-    // Linear Dodge (Add)
+    // Linear Dodge (Add): Base + Glow
     compositeRgb = baseColor.rgb + glowRgb;
   } else {
-    // Screen: 1 - (1 - base) * (1 - glow)
+    // Screen: 1 - (1 - Base) * (1 - Glow)
     compositeRgb = 1.0 - (1.0 - clamp(baseColor.rgb, 0.0, 1.0)) * (1.0 - clamp(glowRgb, 0.0, 1.0));
   }
   
-  float finalAlpha = max(baseColor.a, clamp(glowAlpha, 0.0, 1.0));
-  
+  // View Modes
   if (u_viewMode == 1) {
-    // Effect Only
-    fragColor = vec4(clamp(glowRgb, 0.0, 1.0), clamp(glowAlpha, 0.0, 1.0));
+    // Effect Only: glow RGB on solid black with alpha 1.0
+    // Screen / Linear Dodge in Photoshop adds this over the base layer without double-exposing
+    fragColor = vec4(clamp(glowRgb, 0.0, 1.0), 1.0);
   } else if (u_viewMode == 2) {
     // Split View (Original left, Composite right with 1px divider)
     float pixelWidth = 1.0 / u_resolution.x;
@@ -214,11 +263,11 @@ void main() {
     } else if (uv.x < u_splitPos) {
       fragColor = baseColor;
     } else {
-      fragColor = vec4(clamp(compositeRgb, 0.0, 1.0), finalAlpha);
+      fragColor = vec4(clamp(compositeRgb, 0.0, 1.0), 1.0);
     }
   } else {
     // Composite
-    fragColor = vec4(clamp(compositeRgb, 0.0, 1.0), finalAlpha);
+    fragColor = vec4(clamp(compositeRgb, 0.0, 1.0), 1.0);
   }
 }
 `;
@@ -475,9 +524,13 @@ export class DualKawaseGlowEngine {
       threshold,
       knee,
       falloff,
+      aspectRatio = 1.0,
+      angle = 0.0,
       chromaShift,
       exposure,
+      saturation = 1.0,
       rolloff,
+      dither = 0.5,
       tint,
       blendMode,
       viewMode,
@@ -486,6 +539,15 @@ export class DualKawaseGlowEngine {
     } = options;
 
     const spreadOffset = Math.max(0.5, radius * 0.12);
+
+    // Compute Anamorphic scale vector and rotation matrix for directional streaks
+    const safeAspect = Math.max(0.1, Math.min(10.0, aspectRatio));
+    const anamorphicX = Math.sqrt(safeAspect);
+    const anamorphicY = 1.0 / anamorphicX;
+
+    const rad = (angle * Math.PI) / 180.0;
+    const cosAngle = Math.cos(rad);
+    const sinAngle = Math.sin(rad);
 
     // ── 1. Prefilter Pass (Input → Level 0 Down FBO) ─────────────────────────
     const lvl0 = this.pyramid[0];
@@ -522,6 +584,16 @@ export class DualKawaseGlowEngine {
         1.0 / src.height
       );
       gl.uniform1f(gl.getUniformLocation(this.downsampleProg, "u_offset"), spreadOffset);
+      gl.uniform2f(
+        gl.getUniformLocation(this.downsampleProg, "u_anamorphicScale"),
+        anamorphicX,
+        anamorphicY
+      );
+      gl.uniform2f(
+        gl.getUniformLocation(this.downsampleProg, "u_rotCosSin"),
+        cosAngle,
+        sinAngle
+      );
 
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
@@ -555,6 +627,16 @@ export class DualKawaseGlowEngine {
         1.0 / lowerH
       );
       gl.uniform1f(gl.getUniformLocation(this.upsampleProg, "u_offset"), spreadOffset);
+      gl.uniform2f(
+        gl.getUniformLocation(this.upsampleProg, "u_anamorphicScale"),
+        anamorphicX,
+        anamorphicY
+      );
+      gl.uniform2f(
+        gl.getUniformLocation(this.upsampleProg, "u_rotCosSin"),
+        cosAngle,
+        sinAngle
+      );
 
       // Inverse-square falloff weight: 1.0 / (1.0 + level * falloff)
       const levelWeight = 1.0 / (1.0 + i * falloff);
@@ -592,7 +674,9 @@ export class DualKawaseGlowEngine {
 
     gl.uniform1f(gl.getUniformLocation(this.compositeProg, "u_chromaShift"), chromaShift);
     gl.uniform1f(gl.getUniformLocation(this.compositeProg, "u_exposure"), exposure);
+    gl.uniform1f(gl.getUniformLocation(this.compositeProg, "u_saturation"), saturation);
     gl.uniform1f(gl.getUniformLocation(this.compositeProg, "u_rolloff"), rolloff);
+    gl.uniform1f(gl.getUniformLocation(this.compositeProg, "u_dither"), dither);
 
     gl.uniform1i(
       gl.getUniformLocation(this.compositeProg, "u_blendMode"),
@@ -664,7 +748,8 @@ export function renderGlowOffscreen(
   const fullOpts: GlowEngineOptions = {
     ...DEFAULT_GLOW_OPTIONS,
     ...options,
-    // Effect Only for Photoshop commit so Photoshop blends the layer via Screen or Linear Dodge
+    // Always render isolated Effect Only pass (glow RGB on solid black with alpha 1.0)
+    // for Screen or Linear Dodge additive blend modes so Photoshop does not double-expose.
     viewMode: "effectOnly",
     // flipY: false aligns row 0 to Photoshop top-left row for imaging.putPixels()
     flipY: false,
