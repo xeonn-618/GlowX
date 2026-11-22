@@ -1,9 +1,9 @@
 /* ─────────────────────────────────────────────────────────────────────────────
-   App.module.css – GlowX Panel Shell
-   Strict charcoal design system: no purple gradients, no glassmorphism.
+   App.module.css – Swiss Optical UI Panel Shell
+   High-contrast Swiss neo-grotesque technical instrument.
+   Strict pitch-black #08080a chassis, 1px grid dividers, 4px controls.
 ───────────────────────────────────────────────────────────────────────────── */
 
-/* ── Panel root ──────────────────────────────────────────────────────────── */
 .panel {
   display: flex;
   flex-direction: column;
@@ -11,56 +11,214 @@
   height: 100%;
   background: var(--bg-canvas);
   overflow: hidden;
+  position: relative;
 }
 
-/* ── Header ──────────────────────────────────────────────────────────────── */
+/* ── 1. Sticky Header Bar ─────────────────────────────────────────────────── */
 .header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 10px 12px 8px;
-  border-bottom: 1px solid var(--border-subtle);
+  justify-content: space-between;
+  padding: 10px 12px;
+  background-color: var(--bg-canvas);
+  border-bottom: 1px solid var(--border-grid);
   flex-shrink: 0;
+  z-index: 10;
 }
 
-.logoMark {
-  font-size: 14px;
-  color: var(--accent-blue);
-  line-height: 1;
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.title {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-/* ── Canvas preview frame ────────────────────────────────────────────────── */
-.previewFrame {
-  flex: 1;
+.opticalMark {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-surface);
-  margin: 12px 12px 0;
-  border-radius: 6px;
-  border: 1px solid var(--border-subtle);
-  overflow: hidden;
-  position: relative;
-  min-height: 160px;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-control);
+  background-color: var(--bg-control);
+  border: 1px solid var(--border-control);
+  color: var(--accent-primary);
+  line-height: 1;
 }
 
-/* Actual canvas – letterboxed to fit the frame */
-.canvas {
+.titleGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-status);
+  transition: background-color 150ms ease;
+}
+
+.statusReady {
+  background-color: var(--status-ready);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+}
+
+.statusIdle {
+  background-color: var(--status-idle);
+}
+
+.statusBusy {
+  background-color: var(--status-busy);
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.4);
+}
+
+.statusError {
+  background-color: var(--status-error);
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.presetSelect {
+  height: 28px;
+  padding: 0 8px;
+  background-color: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.presetSelect:hover {
+  background-color: var(--bg-control-hover);
+  border-color: var(--border-active);
+}
+
+.presetSelect:focus-visible {
+  border-color: var(--border-active);
+}
+
+.btnReset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background-color: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.btnReset:hover {
+  background-color: var(--bg-control-hover);
+  color: var(--text-primary);
+  border-color: var(--border-active);
+}
+
+/* ── 2. Live Preview Viewport ─────────────────────────────────────────────── */
+.viewportSection {
+  position: relative;
+  padding: 10px 12px;
+  background-color: var(--bg-canvas);
+  border-bottom: 1px solid var(--border-grid);
+  flex-shrink: 0;
+}
+
+.previewFrame {
+  position: relative;
+  width: 100%;
+  height: 190px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-grid);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.previewCanvas {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
   display: block;
 }
 
-/* ── Empty / loading placeholder ─────────────────────────────────────────── */
+/* Floating Top-Left Mode Controls */
+.floatingTopLeft {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  background: rgba(8, 8, 10, 0.88);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  padding: 2px;
+  gap: 2px;
+  z-index: 15;
+}
+
+.modeToggleBtn {
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  padding: 3px 7px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+
+.modeToggleBtn:hover {
+  color: var(--text-primary);
+}
+
+.modeToggleActive {
+  background-color: var(--bg-control-hover);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Floating Top-Right Badge */
+.floatingTopRight {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  background: rgba(8, 8, 10, 0.88);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  padding: 3px 7px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  z-index: 15;
+}
+
+/* Placeholder & Spinners */
 .placeholder {
   display: flex;
   flex-direction: column;
@@ -71,29 +229,28 @@
 }
 
 .placeholderIcon {
-  font-size: 24px;
-  color: var(--border-focus);
+  font-size: 26px;
+  color: var(--border-control);
   line-height: 1;
 }
 
 .placeholderText {
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--text-muted);
   line-height: 1.5;
 }
 
 .placeholderText strong {
-  color: var(--text-secondary);
-  font-weight: 500;
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .spinnerText {
-  font-size: 11px;
-  color: var(--text-muted);
-  letter-spacing: 0.04em;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
 }
 
-/* ── Error box ───────────────────────────────────────────────────────────── */
 .errorBox {
   display: flex;
   flex-direction: column;
@@ -104,106 +261,306 @@
 }
 
 .errorIcon {
-  font-size: 18px;
-  color: #ef4444;
+  font-size: 20px;
+  color: var(--status-error);
 }
 
 .errorText {
-  font-size: 11px;
-  color: #ef4444;
-  opacity: 0.85;
-  line-height: 1.5;
-  max-width: 200px;
+  font-size: 11.5px;
+  color: var(--status-error);
+  line-height: 1.4;
+  max-width: 240px;
 }
 
-/* ── Info strip ──────────────────────────────────────────────────────────── */
-.infoStrip {
+/* ── 3. Scrollable Parameter Grid ─────────────────────────────────────────── */
+.scrollArea {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background-color: var(--bg-canvas);
+}
+
+.section {
+  position: relative;
+  background-color: var(--bg-surface);
+  border-bottom: 1px solid var(--border-grid);
+  padding: var(--space-panel-y) var(--space-panel-x);
+}
+
+/* Swiss Registration Crosshairs at Intersections */
+.crosshairTopLeft {
+  position: absolute;
+  top: -3.5px;
+  left: 10px;
+  z-index: 5;
+}
+
+.crosshairTopRight {
+  position: absolute;
+  top: -3.5px;
+  right: 10px;
+  z-index: 5;
+}
+
+/* Section Header */
+.sectionHeader {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border-top: 1px solid var(--border-subtle);
-  background: var(--bg-surface);
-  margin: 0 12px;
-  border-bottom-left-radius: 6px;
-  border-bottom-right-radius: 6px;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 10px;
 }
 
-.infoLabel {
-  font-size: 10px;
+.sectionTitle {
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
 
-.infoValue {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-  margin-right: 6px;
+.sectionChevron {
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 120ms ease;
 }
 
-/* ── Sticky bottom action bar ────────────────────────────────────────────── */
+.sectionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 2-Column Micro-Row */
+.twoColRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+/* Tint and Swatch Controls */
+.tintRow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tintHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11.5px;
+}
+
+.tintLabel {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.tintHex {
+  color: var(--text-primary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.swatchControls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.activeSwatch {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-control);
+  cursor: pointer;
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.colorInputHidden {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.presetChips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-control);
+  cursor: pointer;
+  transition: transform 100ms ease, border-color 100ms ease;
+}
+
+.chip:hover {
+  transform: scale(1.1);
+  border-color: var(--border-active);
+}
+
+.chipActive {
+  border-color: var(--border-active);
+  outline: 1.5px solid var(--border-active);
+  outline-offset: 1px;
+}
+
+/* Shader-Adaptive Checkbox */
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.checkboxInput {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background-color: var(--bg-control);
+  border: 1px solid var(--border-control);
+  cursor: pointer;
+  position: relative;
+  transition: background-color 100ms ease, border-color 100ms ease;
+}
+
+.checkboxInput:checked {
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.checkboxInput:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 3px;
+  height: 7px;
+  border: solid var(--bg-canvas);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+/* Blend Mode Segmented Row */
+.blendModeRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.blendModeLabel {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.blendModeTray {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  background-color: var(--bg-control);
+  padding: 3px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-grid);
+}
+
+.blendModeBtn {
+  height: 26px;
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.blendModeBtn:hover {
+  color: var(--text-primary);
+}
+
+.blendModeActive {
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* ── 4. Sticky Bottom Action Bar ──────────────────────────────────────────── */
 .actionBar {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border-top: 1px solid var(--border-subtle);
-  background: var(--bg-canvas);
+  background-color: var(--bg-canvas);
+  border-top: 1px solid var(--border-grid);
   flex-shrink: 0;
+  z-index: 10;
 }
 
-/* ── Buttons ─────────────────────────────────────────────────────────────── */
-
-/* Shared base */
-.btnSecondary,
-.btnPrimary {
-  flex: 1;
-  height: 30px;
-  border-radius: 6px;
-  font-family: var(--font-sans);
+.btnSecondary {
+  height: 34px;
+  padding: 0 14px;
+  background-color: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 500;
+  letter-spacing: -0.01em;
   cursor: pointer;
-  transition: background 120ms ease, opacity 120ms ease;
+  transition: background-color 120ms ease, border-color 120ms ease;
   white-space: nowrap;
-  outline: none;
-}
-
-.btnSecondary:focus-visible,
-.btnPrimary:focus-visible {
-  outline: 1.5px solid var(--border-focus);
-  outline-offset: 2px;
-}
-
-/* Secondary – ghost / outlined */
-.btnSecondary {
-  background: var(--bg-control);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-subtle);
 }
 
 .btnSecondary:hover:not(:disabled) {
-  background: var(--bg-control-hover);
-  color: var(--text-primary);
+  background-color: var(--bg-control-hover);
+  border-color: var(--border-active);
 }
 
-/* Primary – high-contrast neutral-white */
 .btnPrimary {
+  flex: 1;
   height: 34px;
-  background: var(--accent-primary);
-  color: var(--bg-canvas);
-  border: none;
+  background-color: var(--cta-bg);
+  border: 1px solid var(--cta-bg);
+  border-radius: var(--radius-control);
+  color: var(--cta-text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+  white-space: nowrap;
 }
 
 .btnPrimary:hover:not(:disabled) {
-  background: #f4f4f5;
+  opacity: 0.9;
 }
 
-/* Disabled state */
+.btnPrimary:active:not(:disabled) {
+  opacity: 0.82;
+}
+
 .btnSecondary:disabled,
 .btnPrimary:disabled {
   opacity: 0.35;

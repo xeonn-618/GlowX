@@ -1,48 +1,96 @@
-/* ─────────────────────────────────────────────────────────────────────────────
-   GlowX – Global Styles
-   Minimal charcoal design system following the UI reference spec.
-───────────────────────────────────────────────────────────────────────────── */
+/* ==========================================================================
+   SWISS OPTICAL UI DESIGN SYSTEM — GLOWX GLOBAL TOKENS
+   Target: Adobe Photoshop UXP Manifest v5 (<webview> React + Vite + TS)
+   Constraints: Strictly sans-serif (NO monospace), pitch-black #08080a chassis,
+                bright crisp 1px control borders, 4px sharp geometry.
+   ========================================================================== */
 
-/* Design tokens */
 :root {
-  --bg-canvas:          #18181b;
-  --bg-surface:         #202024;
-  --bg-control:         #27272c;
-  --bg-control-hover:   #303036;
-  --border-subtle:      #2e2e34;
-  --border-focus:       #52525b;
-  --text-primary:       #f4f4f5;
-  --text-secondary:     #a1a1aa;
-  --text-muted:         #71717a;
-  --accent-primary:     #e4e4e7;
-  --accent-blue:        #3b82f6;
+  /* 1. Surface & Chassis Hierarchy */
+  --bg-canvas: #08080a;
+  --bg-surface: #101013;
+  --bg-control: #16161b;
+  --bg-control-hover: #202027;
 
-  /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* 2. Borders & Swiss Registration Grid */
+  --border-grid: #242429;
+  --border-control: #52525c;
+  --border-active: #f4f4f6;
+  --crosshair-color: #52525c;
+
+  /* 3. Typography Hierarchy */
+  --text-primary: #f4f4f6;
+  --text-secondary: #a1a1aa;
+  --text-muted: #6e6e77;
+
+  /* 4. Signature Accent & Primary CTA */
+  --accent-primary: #f4f4f6;
+  --cta-bg: #f4f4f6;
+  --cta-text: #08080a;
+  --status-ready: #22c55e;
+  --status-idle: #71717a;
+  --status-busy: #38bdf8;
+  --status-error: #ef4444;
+
+  /* 5. Typography Stack (Strictly Sans-Serif — ZERO Monospace) */
+  --font-sans: 'Inter', 'Plus Jakarta Sans', 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* 6. Geometry & Spacing Scale */
+  --radius-control: 4px;
+  --radius-track: 1.5px;
+  --radius-thumb: 2px;
+  --radius-status: 1px;
+
+  --space-panel-x: 12px;
+  --space-panel-y: 10px;
+  --space-row-gap: 10px;
+  --space-control-gap: 6px;
+
+  --control-height: 28px;
+  --cta-height: 34px;
 }
 
-*,
-*::before,
-*::after {
+/* Base Reset & Hygiene */
+*, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  font-family: var(--font-sans);
 }
 
-html,
-body,
-#root {
+html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--bg-canvas);
+  background-color: var(--bg-canvas);
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 12px;
+  line-height: 1.4;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
 }
 
-/* Scrollbar – thin charcoal */
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 2px; }
+/* Numeric Hygiene */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Clean Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-canvas);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-grid);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-control);
+}

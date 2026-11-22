@@ -273,11 +273,20 @@ async function handle(rawMsg) {
           const docW = typeof doc.width === "number" ? doc.width : Math.round(Number(doc.width) || msg.width);
           const docH = typeof doc.height === "number" ? doc.height : Math.round(Number(doc.height) || msg.height);
 
-          const newLayer = await doc.createLayer({
-            name: msg.name || "GlowX Effect",
-            opacity: msg.opacity ?? 100,
-            blendMode: msg.blendMode || "screen",
-          });
+          let newLayer;
+          try {
+            newLayer = await doc.createLayer({
+              name: msg.name || "GlowX Effect",
+              opacity: msg.opacity ?? 100,
+              blendMode: msg.blendMode || "screen",
+            });
+          } catch (layerErr) {
+            newLayer = await doc.createLayer({
+              name: msg.name || "GlowX Effect",
+              opacity: msg.opacity ?? 100,
+              blendMode: "screen",
+            });
+          }
 
           let uint8;
           if (msg.base64) {

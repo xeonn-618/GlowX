@@ -1,0 +1,51 @@
+/* Falloff Curve Well Styles */
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.headerRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.headerLabel {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.headerValue {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.well {
+  position: relative;
+  width: 100%;
+  height: 84px;
+  background-color: var(--bg-canvas);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  cursor: ns-resize;
+  touch-action: none;
+  transition: border-color 120ms ease;
+}
+
+.well:hover {
+  border-color: var(--border-active);
+}
+
+.canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}

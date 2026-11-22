@@ -1,0 +1,53 @@
+/* Split-Screen Draggable Wipe Handle */
+.splitRoot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  z-index: 20;
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.hairline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background-color: rgba(244, 244, 246, 0.9);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.grip {
+  position: relative;
+  width: 18px;
+  height: 26px;
+  background-color: var(--bg-control);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+  transition: border-color 100ms ease, background-color 100ms ease, transform 100ms ease;
+  pointer-events: none;
+}
+
+.splitRoot:hover .grip,
+.dragging .grip {
+  border-color: var(--border-active);
+  background-color: var(--bg-control-hover);
+  transform: scale(1.06);
+}
+
+.gripIcon {
+  display: block;
+}
