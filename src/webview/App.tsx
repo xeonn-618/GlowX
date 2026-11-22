@@ -6,6 +6,7 @@ import {
   type GlowEngineOptions,
   DEFAULT_GLOW_OPTIONS,
 } from "./engine/glowRenderer";
+import { estimateDepth, type DepthData } from "./engine/depthEngine";
 import { Slider } from "./components/Slider";
 import { FalloffCurve } from "./components/FalloffCurve";
 import { SplitHandle } from "./components/SplitHandle";
@@ -38,8 +39,12 @@ const PRESETS: Preset[] = [
       saturation: 1.0,
       rolloff: 1.0,
       dither: 0.5,
-      tint: "#f4f4f6",
+      coreTint: "#ffffff",
+      haloTint: "#f4f4f6",
       blendMode: "screen",
+      halationEnabled: false,
+      hueKeyEnabled: false,
+      depthGatingEnabled: false,
     },
   },
   {
@@ -58,13 +63,17 @@ const PRESETS: Preset[] = [
       saturation: 1.25,
       rolloff: 1.4,
       dither: 0.6,
-      tint: "#7dd3fc",
+      coreTint: "#f4f4f6",
+      haloTint: "#7dd3fc",
       blendMode: "screen",
+      halationEnabled: false,
+      hueKeyEnabled: false,
+      depthGatingEnabled: false,
     },
   },
   {
     id: "subtleFilmic",
-    name: "Subtle Filmic",
+    name: "Subtle Filmic (35mm)",
     options: {
       intensity: 0.85,
       radius: 10.0,
@@ -78,8 +87,14 @@ const PRESETS: Preset[] = [
       saturation: 0.9,
       rolloff: 1.8,
       dither: 0.8,
-      tint: "#f4f4f6",
+      coreTint: "#fff7ed",
+      haloTint: "#f4f4f6",
       blendMode: "screen",
+      halationEnabled: true,
+      halationIntensity: 0.7,
+      halationSpread: 1.3,
+      hueKeyEnabled: false,
+      depthGatingEnabled: false,
     },
   },
   {
@@ -98,8 +113,14 @@ const PRESETS: Preset[] = [
       saturation: 1.4,
       rolloff: 1.2,
       dither: 0.5,
-      tint: "#f59e0b",
+      coreTint: "#fef08a",
+      haloTint: "#f59e0b",
       blendMode: "linearDodge",
+      halationEnabled: true,
+      halationIntensity: 1.1,
+      halationSpread: 1.7,
+      hueKeyEnabled: false,
+      depthGatingEnabled: false,
     },
   },
   {
@@ -118,8 +139,14 @@ const PRESETS: Preset[] = [
       saturation: 1.8,
       rolloff: 0.8,
       dither: 0.5,
-      tint: "#ec4899",
+      coreTint: "#fdf4ff",
+      haloTint: "#ec4899",
       blendMode: "linearDodge",
+      halationEnabled: false,
+      hueKeyEnabled: true,
+      targetHue: 320.0,
+      hueTolerance: 45.0,
+      depthGatingEnabled: false,
     },
   },
   {
@@ -138,13 +165,18 @@ const PRESETS: Preset[] = [
       saturation: 1.3,
       rolloff: 1.1,
       dither: 0.6,
-      tint: "#38bdf8",
+      coreTint: "#f0f9ff",
+      haloTint: "#38bdf8",
       blendMode: "screen",
+      halationEnabled: false,
+      hueKeyEnabled: false,
+      depthGatingEnabled: false,
     },
   },
 ];
 
-const QUICK_CHIPS = ["#f4f4f6", "#7dd3fc", "#f59e0b", "#ec4899", "#38bdf8"];
+const CORE_QUICK_CHIPS = ["#ffffff", "#f4f4f6", "#fef08a", "#fdf4ff", "#f0f9ff"];
+const HALO_QUICK_CHIPS = ["#7dd3fc", "#38bdf8", "#f59e0b", "#ec4899", "#f4f4f6"];
 
 type Status = "idle" | "loading" | "ready" | "committing" | "error";
 
@@ -159,10 +191,16 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<DualKawaseGlowEngine | null>(null);
+  const depthCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const [status, setStatus] = useState<Status>("idle");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [layerPixels, setLayerPixels] = useState<LayerPixels | null>(null);
+
+  // Depth Engine State
+  const [depthData, setDepthData] = useState<DepthData | null>(null);
+  const [depthStatus, setDepthStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [depthProgressText, setDepthProgressText] = useState<string>("");
 
   // Custom presets from localStorage
   const [customPresets, setCustomPresets] = useState<Preset[]>(() => {
@@ -183,29 +221,29 @@ export default function App() {
   });
   const [selectedPreset, setSelectedPreset] = useState<string>("default");
   const [shaderAdaptive, setShaderAdaptive] = useState<boolean>(false);
+  const [adaptiveTarget, setAdaptiveTarget] = useState<"halo" | "core">("halo");
 
-  // Collapsible section state
+  // Collapsible section state (Section 4 Depth Z-Gating collapsed by default)
   const [sectionsOpen, setSectionsOpen] = useState({
     core: true,
     optics: true,
     color: true,
+    depth: false,
   });
 
-  const toggleSection = (key: "core" | "optics" | "color") => {
+  const toggleSection = (key: "core" | "optics" | "color" | "depth") => {
     setSectionsOpen((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   // Sync Shader-Adaptive Mode to CSS Custom Property --accent-primary
   useEffect(() => {
     if (shaderAdaptive) {
-      document.documentElement.style.setProperty(
-        "--accent-primary",
-        options.tint
-      );
+      const activeColor = adaptiveTarget === "halo" ? options.haloTint : options.coreTint;
+      document.documentElement.style.setProperty("--accent-primary", activeColor);
     } else {
       document.documentElement.style.setProperty("--accent-primary", "#f4f4f6");
     }
-  }, [shaderAdaptive, options.tint]);
+  }, [shaderAdaptive, adaptiveTarget, options.haloTint, options.coreTint]);
 
   // Keep live engine updated at 60fps when options change
   const triggerRender = useCallback(
@@ -238,14 +276,14 @@ export default function App() {
       if (msg.type === "LAYER_PIXELS") {
         if (msg.purpose === "COMMIT") {
           // Offscreen full-resolution GPU pass
-          // For Screen or Linear Dodge additive blend modes, render isolated Effect Only
-          // (glow RGB on solid black with alpha 1.0) so Photoshop does not double-expose.
+          // Passes cached depthData to renderGlowOffscreen so depth scales cleanly at full res
           try {
             const fullResBuffer = renderGlowOffscreen(
               msg.buffer,
               msg.width,
               msg.height,
-              options
+              options,
+              depthData
             );
 
             sendToUxp({
@@ -287,7 +325,7 @@ export default function App() {
     });
 
     return unsubscribe;
-  }, [options, activePresetName]);
+  }, [options, activePresetName, depthData]);
 
   // ── Initialize or resize preview canvas and WebGL2 engine ─────────────────
   useEffect(() => {
@@ -318,8 +356,39 @@ export default function App() {
       layerPixels.width,
       layerPixels.height
     );
+
+    if (depthData) {
+      engineRef.current.setDepthMap(
+        depthData.normalizedDepth,
+        depthData.width,
+        depthData.height
+      );
+    }
+
     engineRef.current.executePipeline(options);
-  }, [layerPixels]); // Only reallocates texture when layerPixels changes
+  }, [layerPixels]);
+
+  // ── Render Depth Thumbnail Canvas ──────────────────────────────────────────
+  useEffect(() => {
+    if (!depthData || !depthCanvasRef.current) return;
+    const canvas = depthCanvasRef.current;
+    canvas.width = depthData.width;
+    canvas.height = depthData.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const imgData = ctx.createImageData(depthData.width, depthData.height);
+    const total = depthData.width * depthData.height;
+    for (let i = 0; i < total; i++) {
+      const val = Math.round(depthData.normalizedDepth[i] * 255);
+      const idx = i * 4;
+      imgData.data[idx] = val;
+      imgData.data[idx + 1] = val;
+      imgData.data[idx + 2] = val;
+      imgData.data[idx + 3] = 255;
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }, [depthData]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
@@ -341,6 +410,40 @@ export default function App() {
       purpose: "COMMIT",
     });
   }, []);
+
+  const handleGenerateDepthMap = async () => {
+    if (!layerPixels) return;
+    try {
+      setDepthStatus("loading");
+      setDepthProgressText("Initializing Depth Anything V2...");
+      const result = await estimateDepth(
+        layerPixels.buffer,
+        layerPixels.width,
+        layerPixels.height,
+        (msg) => setDepthProgressText(msg)
+      );
+
+      setDepthData(result);
+      if (engineRef.current) {
+        engineRef.current.setDepthMap(
+          result.normalizedDepth,
+          result.width,
+          result.height
+        );
+        engineRef.current.executePipeline({
+          ...options,
+          depthGatingEnabled: true,
+        });
+      }
+      setOptions((prev) => ({ ...prev, depthGatingEnabled: true }));
+      setDepthStatus("ready");
+      setDepthProgressText(`Depth map ready (${result.width} × ${result.height})`);
+    } catch (err) {
+      console.error("[GlowX] Depth estimation failed:", err);
+      setDepthStatus("error");
+      setDepthProgressText((err as Error).message || "Depth estimation failed");
+    }
+  };
 
   const handlePresetSelect = (presetId: string) => {
     setSelectedPreset(presetId);
@@ -727,6 +830,60 @@ export default function App() {
                   disabled={isBusy}
                 />
               </div>
+
+              {/* Hue-Targeted Glow / Color Keying */}
+              <div className={styles.featureBox}>
+                <label className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    className={styles.checkboxInput}
+                    checked={options.hueKeyEnabled}
+                    onChange={(e) => updateOption("hueKeyEnabled", e.target.checked)}
+                    disabled={isBusy}
+                  />
+                  <span>
+                    Hue-Targeted Glow (Color Key)
+                    {options.hueKeyEnabled && (
+                      <span
+                        className={styles.hueIndicator}
+                        style={{
+                          backgroundColor: `hsl(${options.targetHue}, 100%, 50%)`,
+                        }}
+                        title={`Target Hue: ${options.targetHue}°`}
+                      />
+                    )}
+                  </span>
+                </label>
+
+                {options.hueKeyEnabled && (
+                  <div className={styles.twoColRow}>
+                    <Slider
+                      label="Target Hue"
+                      value={options.targetHue}
+                      min={0.0}
+                      max={360.0}
+                      step={1.0}
+                      precision={0}
+                      unit="°"
+                      defaultValue={320.0}
+                      onChange={(v) => updateOption("targetHue", v)}
+                      disabled={isBusy}
+                    />
+                    <Slider
+                      label="Hue Tolerance"
+                      value={options.hueTolerance}
+                      min={5.0}
+                      max={180.0}
+                      step={1.0}
+                      precision={0}
+                      unit="°"
+                      defaultValue={35.0}
+                      onChange={(v) => updateOption("hueTolerance", v)}
+                      disabled={isBusy}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </section>
@@ -767,6 +924,48 @@ export default function App() {
                 onChange={(v) => updateOption("falloff", v)}
                 disabled={isBusy}
               />
+
+              {/* Analog Film Halation */}
+              <div className={styles.featureBox}>
+                <label className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    className={styles.checkboxInput}
+                    checked={options.halationEnabled}
+                    onChange={(e) => updateOption("halationEnabled", e.target.checked)}
+                    disabled={isBusy}
+                  />
+                  <span>Analog Film Halation (35mm Edge Bleed)</span>
+                </label>
+
+                {options.halationEnabled && (
+                  <div className={styles.twoColRow}>
+                    <Slider
+                      label="Halation Intensity"
+                      value={options.halationIntensity}
+                      min={0.0}
+                      max={3.0}
+                      step={0.05}
+                      precision={2}
+                      defaultValue={0.8}
+                      onChange={(v) => updateOption("halationIntensity", v)}
+                      disabled={isBusy}
+                    />
+                    <Slider
+                      label="Halation Spread"
+                      value={options.halationSpread}
+                      min={0.5}
+                      max={4.0}
+                      step={0.1}
+                      precision={1}
+                      unit="x"
+                      defaultValue={1.5}
+                      onChange={(v) => updateOption("halationSpread", v)}
+                      disabled={isBusy}
+                    />
+                  </div>
+                )}
+              </div>
 
               {/* Anamorphic Stretch & Streak Angle */}
               <div className={styles.twoColRow}>
@@ -883,47 +1082,93 @@ export default function App() {
 
           {sectionsOpen.color && (
             <div className={styles.sectionBody}>
-              {/* Tint Swatch & Preset Chips */}
-              <div className={styles.tintRow}>
-                <div className={styles.tintHeader}>
-                  <span className={styles.tintLabel}>Optical Tint</span>
-                  <span className={styles.tintHex}>{options.tint}</span>
-                </div>
-
-                <div className={styles.swatchControls}>
-                  <div
-                    className={styles.activeSwatch}
-                    style={{ backgroundColor: options.tint }}
-                    title="Click to select custom tint"
-                  >
-                    <input
-                      type="color"
-                      className={styles.colorInputHidden}
-                      value={options.tint}
-                      onChange={(e) => updateOption("tint", e.target.value)}
-                      disabled={isBusy}
-                    />
+              {/* Dual-Tone Core & Halo Swatches */}
+              <div className={styles.dualSwatchContainer}>
+                {/* 1. Core Tint (inner tight mip levels 0-2) */}
+                <div className={styles.tintRow}>
+                  <div className={styles.tintHeader}>
+                    <span className={styles.tintLabel}>Core Tint (Mips 0-2)</span>
+                    <span className={styles.tintHex}>{options.coreTint}</span>
                   </div>
 
-                  <div className={styles.presetChips}>
-                    {QUICK_CHIPS.map((chipHex) => (
-                      <button
-                        key={chipHex}
-                        className={`${styles.chip} ${
-                          options.tint.toLowerCase() === chipHex.toLowerCase()
-                            ? styles.chipActive
-                            : ""
-                        }`}
-                        style={{ backgroundColor: chipHex }}
-                        onClick={() => updateOption("tint", chipHex)}
+                  <div className={styles.swatchControls}>
+                    <div
+                      className={styles.activeSwatch}
+                      style={{ backgroundColor: options.coreTint }}
+                      title="Click to select Core Tint (mips 0-2)"
+                    >
+                      <input
+                        type="color"
+                        className={styles.colorInputHidden}
+                        value={options.coreTint}
+                        onChange={(e) => updateOption("coreTint", e.target.value)}
                         disabled={isBusy}
-                        title={`Select ${chipHex}`}
                       />
-                    ))}
+                    </div>
+
+                    <div className={styles.presetChips}>
+                      {CORE_QUICK_CHIPS.map((chipHex) => (
+                        <button
+                          key={chipHex}
+                          className={`${styles.chip} ${
+                            options.coreTint.toLowerCase() === chipHex.toLowerCase()
+                              ? styles.chipActive
+                              : ""
+                          }`}
+                          style={{ backgroundColor: chipHex }}
+                          onClick={() => updateOption("coreTint", chipHex)}
+                          disabled={isBusy}
+                          title={`Select Core Tint ${chipHex}`}
+                        />
+                      ))}
+                    </div>
                   </div>
                 </div>
 
-                {/* Shader-Adaptive Mode Checkbox */}
+                {/* 2. Halo Tint (outer wide mip levels 3-5) */}
+                <div className={styles.tintRow}>
+                  <div className={styles.tintHeader}>
+                    <span className={styles.tintLabel}>Halo Tint (Mips 3-5)</span>
+                    <span className={styles.tintHex}>{options.haloTint}</span>
+                  </div>
+
+                  <div className={styles.swatchControls}>
+                    <div
+                      className={styles.activeSwatch}
+                      style={{ backgroundColor: options.haloTint }}
+                      title="Click to select Halo Tint (mips 3-5)"
+                    >
+                      <input
+                        type="color"
+                        className={styles.colorInputHidden}
+                        value={options.haloTint}
+                        onChange={(e) => updateOption("haloTint", e.target.value)}
+                        disabled={isBusy}
+                      />
+                    </div>
+
+                    <div className={styles.presetChips}>
+                      {HALO_QUICK_CHIPS.map((chipHex) => (
+                        <button
+                          key={chipHex}
+                          className={`${styles.chip} ${
+                            options.haloTint.toLowerCase() === chipHex.toLowerCase()
+                              ? styles.chipActive
+                              : ""
+                          }`}
+                          style={{ backgroundColor: chipHex }}
+                          onClick={() => updateOption("haloTint", chipHex)}
+                          disabled={isBusy}
+                          title={`Select Halo Tint ${chipHex}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Shader-Adaptive Mode Checkbox + Target Selector */}
+              <div className={styles.adaptiveContainer}>
                 <label className={styles.checkboxRow}>
                   <input
                     type="checkbox"
@@ -932,10 +1177,31 @@ export default function App() {
                     onChange={(e) => setShaderAdaptive(e.target.checked)}
                     disabled={isBusy}
                   />
-                  <span>
-                    Shader-Adaptive Mode (Sync UI accent to tint)
-                  </span>
+                  <span>Shader-Adaptive Mode</span>
                 </label>
+
+                {shaderAdaptive && (
+                  <div className={styles.adaptiveTray}>
+                    <button
+                      className={`${styles.adaptiveBtn} ${
+                        adaptiveTarget === "halo" ? styles.adaptiveBtnActive : ""
+                      }`}
+                      onClick={() => setAdaptiveTarget("halo")}
+                      title="Sync UI accent to Halo Tint"
+                    >
+                      Halo
+                    </button>
+                    <button
+                      className={`${styles.adaptiveBtn} ${
+                        adaptiveTarget === "core" ? styles.adaptiveBtnActive : ""
+                      }`}
+                      onClick={() => setAdaptiveTarget("core")}
+                      title="Sync UI accent to Core Tint"
+                    >
+                      Core
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Blend Mode Segmented Tray */}
@@ -968,6 +1234,125 @@ export default function App() {
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+        </section>
+
+        {/* SECTION 4: DEPTH Z-GATING (Collapsed by Default) */}
+        <section className={styles.section}>
+          <Crosshair className={styles.crosshairTopLeft} />
+          <Crosshair className={styles.crosshairTopRight} />
+
+          <div
+            className={styles.sectionHeader}
+            onClick={() => toggleSection("depth")}
+          >
+            <span className={styles.sectionTitle}>4. Depth Z-Gating</span>
+            <span className={styles.sectionChevron}>
+              {sectionsOpen.depth ? "▾" : "▸"}
+            </span>
+          </div>
+
+          {sectionsOpen.depth && (
+            <div className={styles.sectionBody}>
+              {/* Full-width Depth Map Generation Action */}
+              <button
+                className={styles.btnDepthGenerate}
+                onClick={handleGenerateDepthMap}
+                disabled={isBusy || !hasLayer || depthStatus === "loading"}
+                title="Infer Depth Anything V2 model on active layer"
+              >
+                {depthStatus === "loading"
+                  ? "Inferring Depth Anything V2…"
+                  : depthData
+                  ? "Regenerate Depth Map"
+                  : "Generate Depth Map"}
+              </button>
+
+              {/* Clean sans-serif status text */}
+              {(depthStatus !== "idle" || depthProgressText) && (
+                <div className={styles.depthStatusBox}>
+                  <span className={styles.depthStatusText}>
+                    {depthProgressText || "Ready"}
+                  </span>
+                  <div
+                    className={`${styles.depthStatusDot} ${
+                      depthStatus === "ready"
+                        ? styles.statusReady
+                        : depthStatus === "loading"
+                        ? styles.statusBusy
+                        : depthStatus === "error"
+                        ? styles.statusError
+                        : styles.statusIdle
+                    }`}
+                  />
+                </div>
+              )}
+
+              {/* Depth Map Preview Thumbnail */}
+              {depthData && (
+                <div className={styles.depthPreviewFrame}>
+                  <canvas
+                    ref={depthCanvasRef}
+                    className={styles.depthCanvas}
+                  />
+                  <div className={styles.depthBadge}>
+                    <span>
+                      {depthData.width} × {depthData.height}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Depth Gating & Invert Z Toggles */}
+              <div className={styles.twoColRow}>
+                <label className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    className={styles.checkboxInput}
+                    checked={options.depthGatingEnabled}
+                    onChange={(e) => updateOption("depthGatingEnabled", e.target.checked)}
+                    disabled={isBusy || !depthData}
+                  />
+                  <span>Enable Depth Gate</span>
+                </label>
+
+                <label className={styles.checkboxRow}>
+                  <input
+                    type="checkbox"
+                    className={styles.checkboxInput}
+                    checked={options.invertZ}
+                    onChange={(e) => updateOption("invertZ", e.target.checked)}
+                    disabled={isBusy || !options.depthGatingEnabled}
+                  />
+                  <span>Invert Z-Buffer</span>
+                </label>
+              </div>
+
+              {/* Sliders for Focus Depth & Depth Range (Locked at 60fps) */}
+              <Slider
+                label="Focus Depth"
+                value={options.focusDepth}
+                min={0.0}
+                max={1.0}
+                step={0.01}
+                precision={2}
+                defaultValue={0.5}
+                onChange={(v) => updateOption("focusDepth", v)}
+                disabled={isBusy || !options.depthGatingEnabled}
+              />
+
+              <Slider
+                label="Depth Range"
+                value={options.depthRange}
+                min={0.05}
+                max={1.0}
+                step={0.01}
+                precision={2}
+                defaultValue={0.3}
+                onChange={(v) => updateOption("depthRange", v)}
+                disabled={isBusy || !options.depthGatingEnabled}
+              />
             </div>
           )}
         </section>

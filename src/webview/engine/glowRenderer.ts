@@ -1,26 +1,48 @@
 // GlowX – Dual-Kawase HDR Bloom WebGL2 Shader Engine
 // Features 6-level RGBA16F FBO pyramid, Premultiplied Alpha Threshold+Knee prefilter,
+// Hue-Targeted Glow / Color Keying, Depth Anything V2 Z-Gating,
+// Dual-Tone Core & Halo Tint, Analog Film Halation,
 // Anamorphic stretch & Angle directional offsets, Inverse-square falloff,
-// Tint, Radial Chromatic Aberration, Saturation, Exposure, Soft Roll-Off, and Anti-Banding Dither.
+// Radial Chromatic Aberration, Saturation, Exposure, Soft Roll-Off, and Anti-Banding Dither.
+
+import type { DepthData } from "./depthEngine";
 
 export interface GlowEngineOptions {
-  intensity: number;       // 0.0 – 5.0
-  radius: number;          // 1.0 – 50.0
-  threshold: number;       // 0.0 – 1.0
-  knee: number;            // 0.0 – 1.0
-  falloff: number;         // 0.1 – 3.0 (inverse-square decay)
-  aspectRatio: number;     // 0.2 – 5.0 (horizontal/vertical anamorphic stretch)
-  angle: number;           // -90 – +90 degrees
-  chromaShift: number;     // 0.0 – 20.0 (radial R/B shift)
-  exposure: number;        // -3.0 – +3.0 EV
-  saturation: number;      // 0.0 – 3.0 (color vibrancy)
-  rolloff: number;         // 0.0 – 2.0 (filmic shoulder)
-  dither: number;          // 0.0 – 2.0 (anti-banding screen dither)
-  tint: string;            // hex color string e.g. "#f4f4f6"
+  intensity: number;          // 0.0 – 5.0
+  radius: number;             // 1.0 – 50.0
+  threshold: number;          // 0.0 – 1.0
+  knee: number;               // 0.0 – 1.0
+  falloff: number;            // 0.1 – 3.0 (inverse-square decay)
+  aspectRatio: number;        // 0.2 – 5.0 (horizontal/vertical anamorphic stretch)
+  angle: number;              // -90 – +90 degrees
+  chromaShift: number;        // 0.0 – 20.0 (radial R/B shift)
+  exposure: number;           // -3.0 – +3.0 EV
+  saturation: number;         // 0.0 – 3.0 (color vibrancy)
+  rolloff: number;            // 0.0 – 2.0 (filmic shoulder)
+  dither: number;             // 0.0 – 2.0 (anti-banding screen dither)
+  coreTint: string;           // hex color for inner tight mips 0-2 (e.g. "#ffffff")
+  haloTint: string;           // hex color for outer wide mips 3-5 (e.g. "#7dd3fc")
+  tint?: string;              // legacy fallback
   blendMode: "screen" | "linearDodge";
   viewMode: "composite" | "effectOnly" | "split";
-  splitPos?: number;       // 0.0 – 1.0
+  splitPos?: number;          // 0.0 – 1.0
   flipY?: boolean;
+
+  // Analog Film Halation
+  halationEnabled: boolean;
+  halationIntensity: number;  // 0.0 – 3.0
+  halationSpread: number;     // 0.5 – 4.0
+
+  // Hue-Targeted Glow / Color Keying
+  hueKeyEnabled: boolean;
+  targetHue: number;          // 0.0 – 360.0 degrees
+  hueTolerance: number;       // 5.0 – 180.0 degrees
+
+  // Depth Anything V2 Z-Gating
+  depthGatingEnabled: boolean;
+  focusDepth: number;         // 0.00 – 1.00
+  depthRange: number;         // 0.05 – 1.00
+  invertZ: boolean;
 }
 
 export const DEFAULT_GLOW_OPTIONS: GlowEngineOptions = {
@@ -36,11 +58,23 @@ export const DEFAULT_GLOW_OPTIONS: GlowEngineOptions = {
   saturation: 1.0,
   rolloff: 1.0,
   dither: 0.5,
+  coreTint: "#ffffff",
+  haloTint: "#7dd3fc",
   tint: "#f4f4f6",
   blendMode: "screen",
   viewMode: "composite",
   splitPos: 0.5,
   flipY: true,
+  halationEnabled: false,
+  halationIntensity: 0.8,
+  halationSpread: 1.5,
+  hueKeyEnabled: false,
+  targetHue: 320.0,
+  hueTolerance: 35.0,
+  depthGatingEnabled: false,
+  focusDepth: 0.5,
+  depthRange: 0.3,
+  invertZ: false,
 };
 
 // ── GLSL Shaders ─────────────────────────────────────────────────────────────
@@ -55,7 +89,7 @@ void main() {
 }
 `;
 
-// Pass 1: Prefilter with Premultiplied Alpha
+// Pass 1: Prefilter with Premultiplied Alpha, Hue Keying & Depth Z-Gating
 // Multiplies texColor.rgb * texColor.a BEFORE computing luminance and threshold
 // so semi-transparent PNG edges and faint drop shadows never ignite into hard glowing outlines.
 const FS_PREFILTER = `#version 300 es
@@ -68,12 +102,74 @@ uniform sampler2D u_image;
 uniform float u_threshold;
 uniform float u_knee;
 
+// Hue Keying Uniforms
+uniform bool u_hueKeyEnabled;
+uniform float u_targetHue;     // 0.0 – 360.0 degrees
+uniform float u_hueTolerance; // 5.0 – 180.0 degrees
+
+// Depth Z-Gating Uniforms
+uniform sampler2D u_depthMap;
+uniform bool u_depthGatingEnabled;
+uniform bool u_hasDepthMap;
+uniform float u_focusDepth;    // 0.00 – 1.00
+uniform float u_depthRange;    // 0.05 – 1.00
+uniform bool u_invertZ;
+
+// Accurate RGB to HSV conversion
+vec3 rgb2hsv(vec3 c) {
+  vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+  vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+
+  float d = q.x - min(q.w, q.y);
+  float e = 1.0e-10;
+  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
 void main() {
   vec4 texColor = texture(u_image, v_uv);
   
   // Premultiply alpha: eliminates edge halos and false threshold triggers on transparent PNGs
   vec3 src = texColor.rgb * texColor.a;
   float brightness = max(src.r, max(src.g, src.b));
+
+  // 1. Hue-Targeted Glow / Color Keying
+  if (u_hueKeyEnabled) {
+    vec3 hsv = rgb2hsv(src);
+    float hueDeg = hsv.x * 360.0;
+    
+    // Circular shortest-distance angle difference
+    float hueDiff = abs(hueDeg - u_targetHue);
+    hueDiff = min(hueDiff, 360.0 - hueDiff);
+    
+    // Smooth proximity falloff within tolerance
+    float hueWeight = 1.0 - smoothstep(u_hueTolerance * 0.65, u_hueTolerance, hueDiff);
+    
+    // Saturation gate: isolate vibrant color highlights while preventing desaturated skin tones and white highlights from blooming
+    float satWeight = smoothstep(0.08, 0.25, hsv.y);
+    hueWeight *= satWeight;
+    
+    brightness *= hueWeight;
+  }
+
+  // 2. Depth Z-Gating
+  float depthGate = 1.0;
+  if (u_depthGatingEnabled && u_hasDepthMap) {
+    float z = texture(u_depthMap, v_uv).r;
+    if (u_invertZ) {
+      z = 1.0 - z;
+    }
+    
+    float distZ = abs(z - u_focusDepth);
+    float normDist = distZ / max(0.001, u_depthRange * 0.5);
+    
+    // Smooth Gaussian depth gate around u_focusDepth
+    depthGate = exp(-normDist * normDist * 2.0);
+    depthGate *= (1.0 - smoothstep(0.8, 1.25, normDist));
+    depthGate = clamp(depthGate, 0.0, 1.0);
+    
+    brightness *= depthGate;
+  }
   
   // Soft knee: smooth transition around threshold to prevent hard staircasing
   float knee = max(0.0001, u_threshold * u_knee);
@@ -83,6 +179,10 @@ void main() {
   
   float contribution = max(soft, brightness - u_threshold) / max(brightness, 0.00001);
   contribution = clamp(contribution, 0.0, 1.0);
+
+  if (u_depthGatingEnabled && u_hasDepthMap) {
+    contribution *= depthGate;
+  }
   
   fragColor = vec4(src * contribution, texColor.a * contribution);
 }
@@ -169,7 +269,8 @@ void main() {
 }
 `;
 
-// Final Composite: Tint, Radial Chromatic Aberration, Saturation, Exposure,
+// Final Composite: Dual-Tone Core & Halo Tint, Analog Film Halation,
+// Radial Chromatic Aberration, Saturation, Exposure,
 // Soft Highlight Roll-Off, Screen / Linear Dodge blend, and Anti-Banding Dither.
 const FS_COMPOSITE = `#version 300 es
 precision highp float;
@@ -178,16 +279,25 @@ in vec2 v_uv;
 out vec4 fragColor;
 
 uniform sampler2D u_baseImage;
-uniform sampler2D u_glowImage;
+uniform sampler2D u_glowImage;  // Level 0 accumulated upsample (total glow)
+uniform sampler2D u_haloImage;  // Level 3 accumulated upsample (outer wide mips 3-5)
+uniform sampler2D u_mip0Image;  // Level 0 downsample (sharp highlight core)
+uniform sampler2D u_mip1Image;  // Level 1 downsample (scatter boundary)
 uniform vec2 u_resolution;
 
 uniform float u_intensity;
-uniform vec3 u_tint;
+uniform vec3 u_coreTint;
+uniform vec3 u_haloTint;
 uniform float u_chromaShift;
 uniform float u_exposure;
 uniform float u_saturation;
 uniform float u_rolloff;
 uniform float u_dither;
+
+// Halation Uniforms
+uniform bool u_halationEnabled;
+uniform float u_halationIntensity;
+uniform float u_halationSpread;
 
 uniform int u_blendMode; // 0 = Screen, 1 = Linear Dodge
 uniform int u_viewMode;  // 0 = Composite, 1 = Effect Only, 2 = Split
@@ -208,13 +318,44 @@ void main() {
   float dist = length(dir);
   vec2 caOffset = normalize(dir + 0.00001) * (dist * u_chromaShift * 0.012);
   
+  // 1. Total Glow Sampling (with chromatic aberration)
   float glowR = texture(u_glowImage, uv + caOffset).r;
   float glowG = texture(u_glowImage, uv).g;
   float glowB = texture(u_glowImage, uv - caOffset).b;
-  vec3 glowRgb = vec3(glowR, glowG, glowB);
-  
-  // Tint application
-  glowRgb = glowRgb * u_tint;
+  vec3 totalGlow = vec3(glowR, glowG, glowB);
+
+  // 2. Halo Glow Sampling (outer wide mip levels 3-5)
+  float haloR = texture(u_haloImage, uv + caOffset).r;
+  float haloG = texture(u_haloImage, uv).g;
+  float haloB = texture(u_haloImage, uv - caOffset).b;
+  vec3 haloGlow = vec3(haloR, haloG, haloB);
+
+  // 3. Core Glow (inner tight mip levels 0-2)
+  vec3 coreGlow = max(vec3(0.0), totalGlow - haloGlow);
+
+  // 4. Analog Film Halation:
+  // Tight high-contrast edge scatter pass using the difference between mip 0 and mip 1/2
+  // Tinted warm 35mm red-orange (#ff3b1f) and blended into the inner boundary before the wide bloom pass
+  vec3 halationRgb = vec3(0.0);
+  if (u_halationEnabled) {
+    vec3 m0 = texture(u_mip0Image, uv).rgb;
+    vec2 halationDir = normalize(dir + 0.00001) * (u_halationSpread * 0.0035);
+    vec3 m1 = texture(u_mip1Image, uv + halationDir).rgb;
+
+    float l0 = dot(m0, vec3(0.299, 0.587, 0.114));
+    float l1 = dot(m1, vec3(0.299, 0.587, 0.114));
+
+    // High-contrast edge scatter: m1 bleeds outside sharp m0 boundary
+    float edgeScatter = max(0.0, l1 * u_halationSpread - l0 * 0.75);
+
+    // Warm 35mm red-orange (#ff3b1f)
+    vec3 halationColor = vec3(1.0, 0.23137, 0.12157);
+    halationRgb = halationColor * (edgeScatter * u_halationIntensity);
+  }
+
+  // 5. Dual-Tone Interpolation:
+  // Smoothly interpolate from Core Tint at bright center to Halo Tint across outer falloff octaves
+  vec3 glowRgb = (coreGlow * u_coreTint) + halationRgb + (haloGlow * u_haloTint);
   
   // Glow Saturation adjustment
   float lum = dot(glowRgb, vec3(0.2126, 0.7152, 0.0722));
@@ -305,7 +446,7 @@ function createProgram(gl: WebGL2RenderingContext, vsSrc: string, fsSrc: string)
   return program;
 }
 
-function hexToRgb(hex: string): [number, number, number] {
+export function hexToRgb(hex: string): [number, number, number] {
   const cleaned = hex.replace("#", "").trim();
   if (cleaned.length === 3) {
     const r = parseInt(cleaned[0] + cleaned[0], 16) / 255;
@@ -347,6 +488,10 @@ export class DualKawaseGlowEngine {
   private baseTexture: WebGLTexture | null = null;
   private baseWidth: number = 0;
   private baseHeight: number = 0;
+
+  // Depth Texture
+  private depthTexture: WebGLTexture | null = null;
+  private hasDepthMap: boolean = false;
 
   // 6-Level RGBA16F Pyramid
   private pyramid: PyramidLevel[] = [];
@@ -509,6 +654,59 @@ export class DualKawaseGlowEngine {
     this.allocatePyramid(width, height);
   }
 
+  /**
+   * Uploads a normalized Float32Array depth map [0.0, 1.0] as an RGBA8 WebGLTexture.
+   * Linear filtering is enabled so it scales cleanly to full resolution during commits.
+   */
+  public setDepthMap(normalizedDepth: Float32Array, width: number, height: number): void {
+    const gl = this.gl;
+    if (!this.depthTexture) {
+      this.depthTexture = gl.createTexture();
+    }
+
+    const totalPixels = width * height;
+    const rgba = new Uint8Array(totalPixels * 4);
+    for (let i = 0; i < totalPixels; i++) {
+      const b = Math.round(clamp(normalizedDepth[i], 0.0, 1.0) * 255);
+      const idx = i * 4;
+      rgba[idx] = b;
+      rgba[idx + 1] = b;
+      rgba[idx + 2] = b;
+      rgba[idx + 3] = 255;
+    }
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.depthTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      width,
+      height,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      rgba
+    );
+
+    this.hasDepthMap = true;
+  }
+
+  public clearDepthMap(): void {
+    const gl = this.gl;
+    if (this.depthTexture) {
+      gl.deleteTexture(this.depthTexture);
+      this.depthTexture = null;
+    }
+    this.hasDepthMap = false;
+  }
+
   public executePipeline(
     options: GlowEngineOptions,
     targetFbo: WebGLFramebuffer | null = null,
@@ -531,11 +729,23 @@ export class DualKawaseGlowEngine {
       saturation = 1.0,
       rolloff,
       dither = 0.5,
+      coreTint,
+      haloTint,
       tint,
       blendMode,
       viewMode,
       splitPos = 0.5,
       flipY = true,
+      halationEnabled = false,
+      halationIntensity = 0.8,
+      halationSpread = 1.5,
+      hueKeyEnabled = false,
+      targetHue = 320.0,
+      hueTolerance = 35.0,
+      depthGatingEnabled = false,
+      focusDepth = 0.5,
+      depthRange = 0.3,
+      invertZ = false,
     } = options;
 
     const spreadOffset = Math.max(0.5, radius * 0.12);
@@ -561,6 +771,27 @@ export class DualKawaseGlowEngine {
     gl.uniform1i(gl.getUniformLocation(this.prefilterProg, "u_image"), 0);
     gl.uniform1f(gl.getUniformLocation(this.prefilterProg, "u_threshold"), threshold);
     gl.uniform1f(gl.getUniformLocation(this.prefilterProg, "u_knee"), knee);
+
+    // Hue Keying Uniforms
+    gl.uniform1i(gl.getUniformLocation(this.prefilterProg, "u_hueKeyEnabled"), hueKeyEnabled ? 1 : 0);
+    gl.uniform1f(gl.getUniformLocation(this.prefilterProg, "u_targetHue"), targetHue);
+    gl.uniform1f(gl.getUniformLocation(this.prefilterProg, "u_hueTolerance"), hueTolerance);
+
+    // Depth Z-Gating Uniforms
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.depthTexture || this.baseTexture);
+    gl.uniform1i(gl.getUniformLocation(this.prefilterProg, "u_depthMap"), 1);
+    gl.uniform1i(
+      gl.getUniformLocation(this.prefilterProg, "u_depthGatingEnabled"),
+      depthGatingEnabled ? 1 : 0
+    );
+    gl.uniform1i(
+      gl.getUniformLocation(this.prefilterProg, "u_hasDepthMap"),
+      this.hasDepthMap ? 1 : 0
+    );
+    gl.uniform1f(gl.getUniformLocation(this.prefilterProg, "u_focusDepth"), focusDepth);
+    gl.uniform1f(gl.getUniformLocation(this.prefilterProg, "u_depthRange"), depthRange);
+    gl.uniform1i(gl.getUniformLocation(this.prefilterProg, "u_invertZ"), invertZ ? 1 : 0);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 
@@ -661,7 +892,22 @@ export class DualKawaseGlowEngine {
     gl.bindTexture(gl.TEXTURE_2D, this.pyramid[0].upTexture);
     gl.uniform1i(gl.getUniformLocation(this.compositeProg, "u_glowImage"), 1);
 
-    // Uniforms
+    // Unit 2: Halo texture (Level 3 accumulated upsample – outer wide mips 3-5)
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.pyramid[3].upTexture);
+    gl.uniform1i(gl.getUniformLocation(this.compositeProg, "u_haloImage"), 2);
+
+    // Unit 3: Mip 0 downsample (sharp highlight core for halation)
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.pyramid[0].downTexture);
+    gl.uniform1i(gl.getUniformLocation(this.compositeProg, "u_mip0Image"), 3);
+
+    // Unit 4: Mip 1 downsample (scatter boundary for halation)
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.pyramid[1].downTexture);
+    gl.uniform1i(gl.getUniformLocation(this.compositeProg, "u_mip1Image"), 4);
+
+    // Resolution & Master Intensity
     gl.uniform2f(
       gl.getUniformLocation(this.compositeProg, "u_resolution"),
       targetWidth,
@@ -669,9 +915,29 @@ export class DualKawaseGlowEngine {
     );
     gl.uniform1f(gl.getUniformLocation(this.compositeProg, "u_intensity"), intensity);
 
-    const [tr, tg, tb] = hexToRgb(tint);
-    gl.uniform3f(gl.getUniformLocation(this.compositeProg, "u_tint"), tr, tg, tb);
+    // Dual-Tone Core & Halo Tints
+    const effectiveCoreHex = coreTint || tint || "#ffffff";
+    const effectiveHaloHex = haloTint || tint || "#7dd3fc";
+    const [cR, cG, cB] = hexToRgb(effectiveCoreHex);
+    const [hR, hG, hB] = hexToRgb(effectiveHaloHex);
+    gl.uniform3f(gl.getUniformLocation(this.compositeProg, "u_coreTint"), cR, cG, cB);
+    gl.uniform3f(gl.getUniformLocation(this.compositeProg, "u_haloTint"), hR, hG, hB);
 
+    // Halation Uniforms
+    gl.uniform1i(
+      gl.getUniformLocation(this.compositeProg, "u_halationEnabled"),
+      halationEnabled ? 1 : 0
+    );
+    gl.uniform1f(
+      gl.getUniformLocation(this.compositeProg, "u_halationIntensity"),
+      halationIntensity
+    );
+    gl.uniform1f(
+      gl.getUniformLocation(this.compositeProg, "u_halationSpread"),
+      halationSpread
+    );
+
+    // Falloff & Optics
     gl.uniform1f(gl.getUniformLocation(this.compositeProg, "u_chromaShift"), chromaShift);
     gl.uniform1f(gl.getUniformLocation(this.compositeProg, "u_exposure"), exposure);
     gl.uniform1f(gl.getUniformLocation(this.compositeProg, "u_saturation"), saturation);
@@ -712,6 +978,10 @@ export class DualKawaseGlowEngine {
       gl.deleteTexture(this.baseTexture);
       this.baseTexture = null;
     }
+    if (this.depthTexture) {
+      gl.deleteTexture(this.depthTexture);
+      this.depthTexture = null;
+    }
     gl.deleteBuffer(this.quadBuffer);
     gl.deleteProgram(this.prefilterProg);
     gl.deleteProgram(this.downsampleProg);
@@ -720,13 +990,18 @@ export class DualKawaseGlowEngine {
   }
 }
 
+function clamp(val: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, val));
+}
+
 // ── Standalone Offscreen Full-Res Render Function ────────────────────────────
 
 export function renderGlowOffscreen(
   pixels: Uint8Array,
   width: number,
   height: number,
-  options: Partial<GlowEngineOptions> = {}
+  options: Partial<GlowEngineOptions> = {},
+  depthData?: DepthData | null
 ): Uint8Array {
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -744,6 +1019,10 @@ export function renderGlowOffscreen(
 
   const engine = new DualKawaseGlowEngine(gl);
   engine.setInputPixels(pixels, width, height);
+
+  if (depthData && depthData.normalizedDepth && depthData.width > 0 && depthData.height > 0) {
+    engine.setDepthMap(depthData.normalizedDepth, depthData.width, depthData.height);
+  }
 
   const fullOpts: GlowEngineOptions = {
     ...DEFAULT_GLOW_OPTIONS,
