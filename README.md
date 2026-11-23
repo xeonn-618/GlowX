@@ -2,6 +2,8 @@
 
 HDR Dual-Kawase optical bloom and depth-gated glow plugin for Adobe Photoshop.
 
+![GlowX Preview](./assets/preview.png)
+
 ## Features
 
 - **6-Level Dual-Kawase Pyramid:** RGBA16F half-float downsample and upsample passes with configurable inverse-square falloff curves.
